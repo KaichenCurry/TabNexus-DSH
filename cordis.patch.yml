@@ -1,0 +1,5 @@
+# TabNexus DSH bundle 补丁：向 host 组合插入插件行
+- insert:
+    - id: tabnexus
+      name: dsh-plugin-tabnexus
+      config: {}
