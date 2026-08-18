@@ -1,23 +1,28 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
-import { createPortal } from "react-dom";
 import type { ClientContext } from "@deepseek-ai/dsh-client-runtime/client";
 import type { PropsRuntime } from "@deepseek-ai/dsh-client-ui-slots";
 import type {} from "@deepseek-ai/dsh-client-ui-layout/client";
+import type {} from "@deepseek-ai/dsh-client-ui-conversation/client";
 
-export const inject: string[] = ["slots"];
+export const inject: string[] = ["slots", "layout"];
 
-type PageStatus = "todo" | "doing" | "done";
-type ViewMode = "categories" | "flow";
-
-interface PageItem {
-  id: string;
+interface BrowserTab {
+  tabId: number;
+  windowId: number;
   title: string;
   url: string;
-  note: string;
-  status: PageStatus;
-  categoryId: string | null;
-  createdAt: string;
+  favicon?: string;
+  pinned: boolean;
+  active: boolean;
+  lastAccessedAt?: string;
+  savedCardId?: string;
+}
+
+interface ChromeSnapshot {
+  revision: string;
+  tabs: BrowserTab[];
+  unsupported: number;
 }
 
 interface Category {
@@ -26,217 +31,385 @@ interface Category {
   color: string;
 }
 
-interface Task {
-  id: string;
-  name: string;
-  goal: string;
-  createdAt: string;
-  updatedAt: string;
+interface OrganizerState {
+  schemaVersion: 4;
   categoryOrder: string[];
   categories: Record<string, Category>;
-  pages: Record<string, PageItem>;
+  assignments: Record<string, string>;
 }
 
-interface LocalState {
-  schemaVersion: 3;
-  activeTaskId: string;
-  taskOrder: string[];
-  tasks: Record<string, Task>;
+interface Proposal {
+  categories: string[];
+  assignments: Record<number, string>;
+  instruction: string;
 }
 
-const STORAGE_KEY = "tabnexus:dsh:workspace:v3";
-const VIEW_KEY = "tabnexus:dsh:view";
-const DOCK_KEY = "tabnexus:dsh:dock-open";
-const COLORS = ["#6483ee", "#44a680", "#9a76e8", "#ee8b5f", "#db6d92", "#4e9eb8"];
+interface InputBridge {
+  sessionId: string;
+  draft: string;
+  actions: {
+    setDraft(text: string): void;
+    submit(): void;
+  };
+}
+
+const STORAGE_KEY = "tabnexus:dsh:tab-manager:v4";
+const PANEL_KEY = "tabnexus:dsh:panel-open";
+const COLORS = ["#5b7cdd", "#4b9b78", "#9470d4", "#d98255", "#c96382", "#438ea8", "#a8893f"];
 
 function uid(prefix: string): string {
   const token = typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   return `${prefix}_${token}`;
 }
 
-function makeTask(name = "我的任务"): Task {
-  const timestamp = new Date().toISOString();
-  return { id: uid("task"), name, goal: "", createdAt: timestamp, updatedAt: timestamp, categoryOrder: [], categories: {}, pages: {} };
+function emptyOrganizer(): OrganizerState {
+  return { schemaVersion: 4, categoryOrder: [], categories: {}, assignments: {} };
 }
 
-function initialState(): LocalState {
-  const task = makeTask();
-  return { schemaVersion: 3, activeTaskId: task.id, taskOrder: [task.id], tasks: { [task.id]: task } };
-}
-
-function loadState(): LocalState {
+function loadOrganizer(): OrganizerState {
   try {
-    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null") as Partial<LocalState> | null;
-    if (parsed?.schemaVersion === 3 && parsed.activeTaskId && Array.isArray(parsed.taskOrder) && parsed.tasks?.[parsed.activeTaskId]) return parsed as LocalState;
-  } catch { /* Invalid local data falls back to a safe empty workspace. */ }
-  return initialState();
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null") as OrganizerState | null;
+    if (parsed?.schemaVersion === 4 && Array.isArray(parsed.categoryOrder) && parsed.categories && parsed.assignments) return parsed;
+  } catch { /* A corrupt local preference should not block live Chrome tabs. */ }
+  return emptyOrganizer();
 }
 
-let currentState = loadState();
-const stateListeners = new Set<() => void>();
-function getState(): LocalState { return currentState; }
-function subscribeState(listener: () => void): () => void { stateListeners.add(listener); return () => stateListeners.delete(listener); }
-function saveState(recipe: (draft: LocalState) => void): void {
-  const draft = JSON.parse(JSON.stringify(currentState)) as LocalState;
-  recipe(draft);
-  const now = new Date().toISOString();
-  const active = draft.tasks[draft.activeTaskId];
-  if (active) active.updatedAt = now;
-  currentState = draft;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
-  for (const listener of stateListeners) listener();
+let organizerState = loadOrganizer();
+const organizerListeners = new Set<() => void>();
+function useOrganizer(): OrganizerState {
+  return useSyncExternalStore(
+    (listener) => { organizerListeners.add(listener); return () => organizerListeners.delete(listener); },
+    () => organizerState,
+    () => organizerState
+  );
 }
-function useLocalState(): LocalState { return useSyncExternalStore(subscribeState, getState, getState); }
+function updateOrganizer(recipe: (next: OrganizerState) => void): void {
+  const next = JSON.parse(JSON.stringify(organizerState)) as OrganizerState;
+  recipe(next);
+  organizerState = next;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  for (const listener of organizerListeners) listener();
+}
 
-function normalizeUrl(raw: string): string {
-  let value: URL;
-  try { value = new URL(raw.trim()); } catch { throw new Error("请输入完整的 http(s) 网页地址"); }
-  if (value.protocol !== "http:" && value.protocol !== "https:") throw new Error("仅支持 http:// 或 https:// 网页");
-  value.hash = "";
-  if ((value.protocol === "http:" && value.port === "80") || (value.protocol === "https:" && value.port === "443")) value.port = "";
-  for (const key of [...value.searchParams.keys()]) {
-    const normalized = key.toLocaleLowerCase();
-    if (normalized.startsWith("utm_") || ["fbclid", "gclid", "dclid", "msclkid", "mc_cid", "mc_eid", "igshid"].includes(normalized)) value.searchParams.delete(key);
+let panelOpen = localStorage.getItem(PANEL_KEY) === "true";
+const panelListeners = new Set<() => void>();
+let nativePanelController: ((open: boolean) => void) | null = null;
+function setPanelOpen(next: boolean): void {
+  if (panelOpen === next) return;
+  panelOpen = next;
+  localStorage.setItem(PANEL_KEY, String(next));
+  nativePanelController?.(next);
+  for (const listener of panelListeners) listener();
+}
+function usePanelOpen(): boolean {
+  return useSyncExternalStore(
+    (listener) => { panelListeners.add(listener); return () => panelListeners.delete(listener); },
+    () => panelOpen,
+    () => panelOpen
+  );
+}
+
+let inputBridge: InputBridge | null = null;
+
+function normalizedUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    url.hash = "";
+    for (const key of [...url.searchParams.keys()]) {
+      const lower = key.toLocaleLowerCase();
+      if (lower.startsWith("utm_") || ["fbclid", "gclid", "dclid", "msclkid", "mc_cid", "mc_eid", "igshid"].includes(lower)) url.searchParams.delete(key);
+    }
+    url.searchParams.sort();
+    return url.toString();
+  } catch {
+    return raw;
   }
-  value.searchParams.sort();
-  return value.toString();
 }
-function domainOf(url: string): string { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; } }
+
+function domainOf(raw: string): string {
+  try { return new URL(raw).hostname.replace(/^www\./, ""); } catch { return raw; }
+}
+
+function shortDomain(raw: string): string {
+  const host = domainOf(raw);
+  const known: Array<[RegExp, string]> = [
+    [/feishu|larksuite|larkoffice/, "飞书"], [/deepseek/, "DeepSeek"], [/meituan/, "美团"],
+    [/kuaishou|kwai/, "快手"], [/lenovo/, "联想"], [/google/, "Google"], [/github/, "GitHub"],
+    [/yuque/, "语雀"], [/notion/, "Notion"], [/localhost|127\.0\.0\.1/, "本地工具"]
+  ];
+  return known.find(([pattern]) => pattern.test(host))?.[1] ?? host.split(".").slice(-2, -1)[0] ?? host;
+}
+
+function smartCategory(tab: BrowserTab, instruction: string): string {
+  const value = `${tab.title} ${tab.url}`.toLocaleLowerCase();
+  if (/按(网站|域名)|domain|站点/.test(instruction.toLocaleLowerCase())) return shortDomain(tab.url);
+  if (/投递|申请|my.?apply|application|进度|记录表/.test(value)) return "投递与跟进";
+  if (/招聘|求职|职位|岗位|校招|jd\b|career|campus|talent|zhaopin|recruit|position|job/.test(value)) return "求职岗位";
+  if (/飞书|语雀|notion|docs?|wiki|文档|表格|sheet/.test(value)) return "文档资料";
+  if (/github|gitlab|开发|代码|api|documentation/.test(value)) return "开发资料";
+  if (/deepseek|chatgpt|claude|gemini|搜索|search|\bai\b|harness/.test(value)) return "AI 与搜索";
+  if (/localhost|127\.0\.0\.1/.test(value)) return "本地工具";
+  return "其他标签";
+}
+
+function explicitCategories(instruction: string): string[] {
+  const match = instruction.match(/(?:分类为|分成|类别(?:是|为)?|按照)\s*[:：]?\s*(.+)$/);
+  if (!match) return [];
+  const values = match[1].split(/[、,，/|；;]/).map((item) => item.trim().replace(/[。.!！]+$/, "")).filter(Boolean);
+  return values.length >= 2 && values.length <= 10 && values.every((item) => item.length <= 18) ? [...new Set(values)] : [];
+}
+
+function scoreCategory(tab: BrowserTab, category: string): number {
+  const haystack = `${tab.title} ${domainOf(tab.url)}`.toLocaleLowerCase();
+  const tokens = category.toLocaleLowerCase().split(/[\s与和、/&_-]+/).filter((token) => token.length > 1);
+  return tokens.reduce((score, token) => score + (haystack.includes(token) ? token.length : 0), 0);
+}
+
+function createProposal(tabs: BrowserTab[], instruction: string): Proposal {
+  const explicit = explicitCategories(instruction);
+  const assignments: Record<number, string> = {};
+  for (const tab of tabs) {
+    if (explicit.length) {
+      const ranked = explicit.map((category) => ({ category, score: scoreCategory(tab, category) })).sort((a, b) => b.score - a.score);
+      assignments[tab.tabId] = ranked[0].score > 0 ? ranked[0].category : smartCategory(tab, instruction);
+    } else {
+      assignments[tab.tabId] = smartCategory(tab, instruction);
+    }
+  }
+  return { categories: [...new Set([...explicit, ...Object.values(assignments)])], assignments, instruction };
+}
+
+async function fetchChromeTabs(): Promise<ChromeSnapshot> {
+  const response = await fetch("/plugins/tabnexus/chrome-tabs", { cache: "no-store" });
+  const payload = await response.json().catch(() => null) as {
+    ok?: boolean;
+    error?: string;
+    data?: { revision?: string; workbench?: { openTabs?: BrowserTab[]; counts?: { unsupported?: number } } };
+  } | null;
+  if (!response.ok || !payload?.ok || !payload.data?.workbench || typeof payload.data.revision !== "string") {
+    throw new Error(payload?.error || "无法读取 Chrome 标签");
+  }
+  return {
+    revision: payload.data.revision,
+    tabs: Array.isArray(payload.data.workbench.openTabs) ? payload.data.workbench.openTabs : [],
+    unsupported: payload.data.workbench.counts?.unsupported ?? 0
+  };
+}
+
+async function focusChromeTab(tabId: number, revision: string): Promise<void> {
+  const response = await fetch("/plugins/tabnexus/chrome-action", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "focus", tabId, revision })
+  });
+  const payload = await response.json().catch(() => null) as { ok?: boolean; error?: string } | null;
+  if (!response.ok || !payload?.ok) throw new Error(payload?.error || "无法切换 Chrome 标签");
+}
+
+function svg(paths: ReactNode, size = 18): ReactNode {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths}</svg>;
+}
+
+const Icons = {
+  tabs: svg(<><rect x="4" y="4" width="13" height="16" rx="2"/><path d="M8 4V2.8A1.8 1.8 0 0 1 9.8 1h8.4A1.8 1.8 0 0 1 20 2.8v13.4A1.8 1.8 0 0 1 18.2 18H17"/></>),
+  close: svg(<path d="m7 7 10 10M17 7 7 17"/>),
+  refresh: svg(<><path d="M20 11a8.1 8.1 0 1 0 .1 3"/><path d="M20 4v7h-7"/></>),
+  search: svg(<><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></>, 16),
+  sparkle: svg(<><path d="m12 3 1.2 3.8L17 8l-3.8 1.2L12 13l-1.2-3.8L7 8l3.8-1.2L12 3Z"/><path d="m18 14 .7 2.3L21 17l-2.3.7L18 20l-.7-2.3L15 17l2.3-.7L18 14Z"/></>),
+  plus: svg(<path d="M12 5v14M5 12h14"/>),
+  external: svg(<><path d="M14 5h5v5M19 5l-8 8"/><path d="M18 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></>, 15),
+  check: svg(<path d="m5 12 4 4L19 6"/>, 16)
+};
 
 const CSS = String.raw`
-.tnx-root{--tnx-bg:color-mix(in srgb,var(--dsw-alias-bg-layer-1,#fff) 83%,transparent);--tnx-solid:var(--dsw-alias-bg-layer-1,#fff);--tnx-soft:var(--dsw-alias-bg-layer-2,#f5f6f9);--tnx-text:var(--dsw-alias-label-primary,#182033);--tnx-muted:var(--dsw-alias-label-secondary,#778094);--tnx-line:var(--dsw-alias-border-l1,rgba(28,39,64,.12));--tnx-line2:var(--dsw-alias-border-l2,rgba(28,39,64,.075));--tnx-blue:var(--dsw-alias-brand-primary,#5878e8);--tnx-green:var(--dsw-alias-state-success-primary,#319a71);--tnx-red:var(--dsw-alias-state-error-primary,#d9586c);font:13px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",system-ui,sans-serif;color:var(--tnx-text);pointer-events:auto}
-.tnx-root *{box-sizing:border-box}.tnx-root button,.tnx-root input,.tnx-root textarea,.tnx-root select{font:inherit;color:inherit}.tnx-root button{cursor:pointer}.tnx-chip{position:fixed;right:18px;top:86px;z-index:62;display:flex;align-items:center;gap:8px;height:42px;padding:0 13px;border:1px solid var(--tnx-line);border-radius:15px;background:var(--tnx-bg);box-shadow:0 10px 32px rgba(31,44,79,.12),inset 0 1px 0 rgba(255,255,255,.62);backdrop-filter:blur(22px) saturate(145%);transition:transform .18s ease,box-shadow .18s ease}.tnx-chip:hover{transform:translateY(-1px);box-shadow:0 14px 35px rgba(31,44,79,.16)}.tnx-chip:active{transform:scale(.98)}.tnx-chip-dot{width:9px;height:9px;border-radius:50%;background:var(--tnx-blue);box-shadow:0 0 0 4px color-mix(in srgb,var(--tnx-blue) 13%,transparent)}.tnx-chip-label{font-weight:650}.tnx-chip-task{max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--tnx-muted);font-size:12px}.tnx-chip-arrow{font-size:10px;color:var(--tnx-muted)}
-.tnx-scrim{position:fixed;inset:0;z-index:63;background:transparent}.tnx-panel{position:fixed;z-index:64;right:12px;top:64px;bottom:12px;width:min(414px,calc(100vw - 24px));display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--tnx-line);border-radius:22px;background:var(--tnx-bg);box-shadow:0 24px 72px rgba(23,32,56,.22),inset 0 1px 0 rgba(255,255,255,.68);backdrop-filter:blur(30px) saturate(155%);animation:tnx-slide .2s cubic-bezier(.2,.8,.2,1)}.tnx-panel[data-mode=expanded]{z-index:66;inset:18px;width:auto;border-radius:24px;background:color-mix(in srgb,var(--dsw-alias-bg-base,#f7f8fb) 94%,transparent)}
-.tnx-head{display:flex;align-items:center;gap:8px;padding:14px 14px 10px;flex:none}.tnx-brand{display:flex;align-items:center;gap:9px;min-width:0}.tnx-logo{display:grid;place-items:center;width:30px;height:30px;border-radius:10px;color:#fff;background:linear-gradient(145deg,#7793fa,#516fe2);box-shadow:0 7px 18px rgba(80,110,229,.28)}.tnx-brand-title{font-weight:680;letter-spacing:-.02em}.tnx-brand-sub{font-size:9px;color:var(--tnx-muted);letter-spacing:.09em}.tnx-spacer{flex:1}.tnx-icon{display:grid;place-items:center;width:30px;height:30px;padding:0;border:1px solid transparent;border-radius:10px;background:transparent;color:var(--tnx-muted)}.tnx-icon:hover{color:var(--tnx-text);background:var(--tnx-soft);border-color:var(--tnx-line)}
-.tnx-toolbar{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:0 14px 10px}.tnx-select,.tnx-input,.tnx-textarea{width:100%;border:1px solid var(--tnx-line);outline:0;background:color-mix(in srgb,var(--tnx-solid) 82%,transparent);transition:border-color .16s,box-shadow .16s,background .16s}.tnx-select,.tnx-input{height:36px;padding:0 11px;border-radius:11px}.tnx-textarea{min-height:86px;padding:10px 11px;border-radius:12px;resize:vertical}.tnx-select:focus,.tnx-input:focus,.tnx-textarea:focus{border-color:color-mix(in srgb,var(--tnx-blue) 58%,var(--tnx-line));box-shadow:0 0 0 3px color-mix(in srgb,var(--tnx-blue) 13%,transparent);background:var(--tnx-solid)}.tnx-task-select{font-weight:600}.tnx-button{height:34px;padding:0 11px;border:1px solid var(--tnx-line);border-radius:10px;background:var(--tnx-solid);font-weight:560}.tnx-button:hover{border-color:color-mix(in srgb,var(--tnx-blue) 38%,var(--tnx-line));color:var(--tnx-blue)}.tnx-button:disabled{opacity:.46;cursor:not-allowed}.tnx-button-primary{border-color:transparent;background:linear-gradient(145deg,#7390f3,#5776e5);color:#fff!important;box-shadow:0 6px 15px rgba(83,113,225,.22)}.tnx-button-danger{color:var(--tnx-red)}
-.tnx-switch{display:flex;gap:3px;margin:0 14px 11px;padding:3px;border:1px solid var(--tnx-line2);border-radius:11px;background:var(--tnx-soft)}.tnx-switch button{flex:1;height:29px;border:0;border-radius:8px;background:transparent;color:var(--tnx-muted);font-size:11px}.tnx-switch button[data-active=true]{background:var(--tnx-solid);color:var(--tnx-text);font-weight:630;box-shadow:0 2px 8px rgba(25,34,57,.08)}.tnx-body{flex:1;min-height:0;overflow-y:auto;padding:0 14px 30px;scrollbar-width:thin}.tnx-panel[data-mode=expanded] .tnx-body{width:min(980px,100%);margin:0 auto;padding:4px 26px 44px}
-.tnx-context{margin-bottom:11px;padding:13px;border:1px solid var(--tnx-line2);border-radius:15px;background:color-mix(in srgb,var(--tnx-solid) 62%,transparent)}.tnx-context-row{display:flex;align-items:flex-start;gap:9px}.tnx-context-copy{flex:1;min-width:0}.tnx-goal{margin:0;font-weight:590;white-space:pre-wrap}.tnx-goal[data-empty=true]{color:var(--tnx-muted);font-weight:450}.tnx-summary{margin-top:4px;color:var(--tnx-muted);font-size:10px}.tnx-progress{font-size:18px;font-weight:700;letter-spacing:-.04em}.tnx-progress-label{text-align:right;color:var(--tnx-muted);font-size:9px}.tnx-track{height:5px;margin-top:9px;overflow:hidden;border-radius:99px;background:color-mix(in srgb,var(--tnx-muted) 12%,transparent)}.tnx-track>span{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--tnx-blue),#7f98f4);transition:width .22s ease}.tnx-context-actions{display:flex;gap:3px}.tnx-mini{height:26px;padding:0 7px;border:0;border-radius:8px;background:transparent;color:var(--tnx-muted);font-size:10px}.tnx-mini:hover{background:var(--tnx-soft);color:var(--tnx-text)}
-.tnx-search{position:relative;margin-bottom:9px}.tnx-search .tnx-input{padding-left:32px;padding-right:55px}.tnx-search-icon{position:absolute;left:10px;top:10px;color:var(--tnx-muted)}.tnx-count{position:absolute;right:10px;top:9px;color:var(--tnx-muted);font-size:10px}.tnx-add{margin-bottom:12px;padding:8px;border:1px solid var(--tnx-line);border-radius:14px;background:color-mix(in srgb,var(--tnx-solid) 68%,transparent)}.tnx-add-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px}.tnx-add-more{display:grid;grid-template-columns:minmax(0,1fr) 128px;gap:7px;margin-top:7px}.tnx-add .tnx-input,.tnx-add .tnx-select{height:34px}
-.tnx-section{margin-bottom:11px;overflow:hidden;border:1px solid var(--tnx-line);border-radius:16px;background:color-mix(in srgb,var(--tnx-solid) 64%,transparent);box-shadow:0 4px 14px rgba(28,39,64,.035)}.tnx-section-head{display:flex;align-items:center;gap:8px;min-height:42px;padding:8px 11px;border-bottom:1px solid var(--tnx-line2)}.tnx-section-dot{width:8px;height:8px;border-radius:50%;box-shadow:0 0 0 4px color-mix(in srgb,currentColor 11%,transparent)}.tnx-section-name{font-weight:650}.tnx-section-count{color:var(--tnx-muted);font-size:10px}.tnx-page{padding:10px 11px;border-top:1px solid var(--tnx-line2);transition:background .15s}.tnx-section-head+.tnx-page{border-top:0}.tnx-page:hover{background:color-mix(in srgb,var(--tnx-blue) 3%,transparent)}.tnx-page-main{display:grid;grid-template-columns:30px minmax(0,1fr) auto;align-items:center;gap:9px}.tnx-favicon{display:grid;place-items:center;width:30px;height:30px;border:1px solid var(--tnx-line2);border-radius:9px;background:var(--tnx-soft);color:var(--tnx-muted);font-size:11px;font-weight:700;text-transform:uppercase}.tnx-page-title{display:block;overflow:hidden;color:var(--tnx-text);font-weight:590;text-decoration:none;text-overflow:ellipsis;white-space:nowrap}.tnx-page-title:hover{color:var(--tnx-blue)}.tnx-domain{margin-top:2px;overflow:hidden;color:var(--tnx-muted);font-size:9px;text-overflow:ellipsis;white-space:nowrap}.tnx-status{width:78px;height:28px;padding:0 6px;border:1px solid var(--tnx-line);border-radius:9px;background:var(--tnx-solid);font-size:10px}.tnx-page-foot{display:flex;align-items:center;gap:5px;margin-top:7px;padding-left:39px}.tnx-note{flex:1;min-width:0;overflow:hidden;color:var(--tnx-muted);font-size:10px;text-overflow:ellipsis;white-space:nowrap}.tnx-more{position:relative}.tnx-more>summary{list-style:none}.tnx-more>summary::-webkit-details-marker{display:none}.tnx-menu{position:absolute;z-index:8;right:0;top:29px;width:178px;padding:5px;border:1px solid var(--tnx-line);border-radius:12px;background:var(--tnx-solid);box-shadow:0 14px 34px rgba(23,32,56,.18)}.tnx-menu button{display:flex;align-items:center;width:100%;height:31px;padding:0 8px;border:0;border-radius:8px;background:transparent;text-align:left;font-size:11px}.tnx-menu button:hover{background:var(--tnx-soft)}.tnx-menu .danger{color:var(--tnx-red)}.tnx-menu .tnx-select{height:31px;font-size:10px}
-.tnx-empty{padding:28px 16px;text-align:center;color:var(--tnx-muted)}.tnx-empty-icon{display:grid;place-items:center;width:42px;height:42px;margin:0 auto 9px;border:1px solid var(--tnx-line);border-radius:14px;background:var(--tnx-soft);font-size:18px}.tnx-empty strong{display:block;margin-bottom:3px;color:var(--tnx-text)}.tnx-add-category{width:100%;height:40px;border:1px dashed var(--tnx-line);border-radius:13px;background:transparent;color:var(--tnx-muted)}.tnx-add-category:hover{border-color:color-mix(in srgb,var(--tnx-blue) 42%,var(--tnx-line));color:var(--tnx-blue)}
-.tnx-flow{padding-top:2px}.tnx-flow-guide{display:grid;grid-template-columns:1fr 20px 1fr 20px 1fr;align-items:center;margin:5px 2px 12px}.tnx-flow-node{padding:12px 9px;border:1px solid var(--tnx-line);border-radius:15px;background:color-mix(in srgb,var(--tnx-solid) 70%,transparent);text-align:center}.tnx-flow-node[data-stage=doing]{border-color:color-mix(in srgb,var(--tnx-blue) 35%,var(--tnx-line));box-shadow:0 8px 20px color-mix(in srgb,var(--tnx-blue) 10%,transparent)}.tnx-flow-value{font-size:21px;font-weight:720;letter-spacing:-.05em}.tnx-flow-label{color:var(--tnx-muted);font-size:10px}.tnx-flow-arrow{text-align:center;color:var(--tnx-muted)}.tnx-flow-list{display:flex;flex-direction:column;gap:8px}.tnx-flow-card{display:grid;grid-template-columns:10px minmax(0,1fr) auto;align-items:center;gap:9px;padding:11px;border:1px solid var(--tnx-line);border-radius:14px;background:color-mix(in srgb,var(--tnx-solid) 66%,transparent)}.tnx-flow-card-dot{width:8px;height:8px;border-radius:50%}.tnx-flow-card-title{overflow:hidden;font-weight:590;text-overflow:ellipsis;white-space:nowrap}.tnx-flow-card-meta{color:var(--tnx-muted);font-size:9px}.tnx-flow-card .tnx-status{width:82px}
-.tnx-dialog-scrim{position:fixed;inset:0;z-index:80;display:grid;place-items:center;padding:18px;background:rgba(18,24,38,.24);backdrop-filter:blur(4px)}.tnx-dialog{width:min(390px,100%);padding:16px;border:1px solid var(--tnx-line);border-radius:19px;background:var(--tnx-solid);box-shadow:0 24px 72px rgba(23,32,56,.28);animation:tnx-scale .17s ease}.tnx-dialog h3{margin:0 0 5px;font-size:15px}.tnx-dialog p{margin:0 0 13px;color:var(--tnx-muted);font-size:11px}.tnx-dialog-fields{display:flex;flex-direction:column;gap:8px}.tnx-dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.tnx-toast{position:fixed;z-index:90;left:50%;bottom:24px;max-width:min(420px,calc(100vw - 30px));transform:translateX(-50%);padding:9px 13px;border:1px solid rgba(255,255,255,.14);border-radius:12px;background:rgba(23,29,44,.92);box-shadow:0 12px 28px rgba(0,0,0,.22);color:#fff;font-size:11px;backdrop-filter:blur(18px);animation:tnx-toast .2s ease}
-@keyframes tnx-slide{from{opacity:0;transform:translateX(18px)}}@keyframes tnx-scale{from{opacity:0;transform:scale(.985)}}@keyframes tnx-toast{from{opacity:0;transform:translate(-50%,8px)}}
-@media(max-width:640px){.tnx-chip{top:auto;right:12px;bottom:16px}.tnx-scrim{background:rgba(18,24,38,.14);backdrop-filter:blur(2px)}.tnx-panel,.tnx-panel[data-mode=expanded]{inset:8px;width:auto;border-radius:20px}.tnx-add-more{grid-template-columns:1fr}.tnx-chip-task{display:none}}
+.tnx-root{--tnx-bg:var(--dsw-specific-sidebar-fill,var(--dsw-alias-bg-base,#fff));--tnx-base:var(--dsw-alias-bg-base,#fff);--tnx-hover:var(--dsw-alias-interactive-bg-hover,rgba(31,41,55,.055));--tnx-active:var(--dsw-alias-interactive-bg-selected,rgba(77,111,214,.10));--tnx-text:var(--dsw-alias-label-primary,#171b24);--tnx-muted:var(--dsw-alias-label-tertiary,#7b818d);--tnx-secondary:var(--dsw-alias-label-secondary,#5f6672);--tnx-line:var(--dsw-alias-border-l2,rgba(24,30,42,.10));--tnx-blue:var(--dsw-alias-state-business-primary,#5c78d7);font:13px/1.45 Inter,-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",system-ui,sans-serif;color:var(--tnx-text);pointer-events:auto}
+.tnx-root *{box-sizing:border-box}.tnx-root button,.tnx-root input,.tnx-root textarea,.tnx-root select{font:inherit;color:inherit}.tnx-root button{cursor:pointer}.tnx-entry{position:fixed;z-index:70;top:14px;right:142px;width:34px;height:34px;display:grid;place-items:center;padding:0;border:0;border-radius:9px;background:transparent;color:var(--tnx-secondary);transition:background .16s ease,color .16s ease,transform .12s ease}.tnx-entry:hover,.tnx-entry[data-open=true]{background:var(--tnx-hover);color:var(--tnx-text)}.tnx-entry:active{transform:scale(.94)}.tnx-entry:focus-visible,.tnx-icon:focus-visible,.tnx-button:focus-visible,.tnx-tab-row:focus-visible{outline:2px solid var(--tnx-blue);outline-offset:2px}
+.tnx-panel{width:100%;height:100%;display:flex;flex-direction:column;background:var(--tnx-bg);animation:tnx-in .2s cubic-bezier(.2,.8,.2,1);overflow:hidden}.tnx-panel-head{height:58px;flex:none;display:flex;align-items:center;gap:9px;padding:0 10px 0 14px;border-bottom:1px solid var(--tnx-line)}.tnx-title-wrap{min-width:0;flex:1}.tnx-title{font-size:14px;font-weight:600;letter-spacing:-.01em}.tnx-subtitle{font-size:11px;color:var(--tnx-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.tnx-icon{width:28px;height:28px;display:grid;place-items:center;flex:none;padding:0;border:0;border-radius:8px;background:transparent;color:var(--tnx-secondary)}.tnx-icon:hover{background:var(--tnx-hover);color:var(--tnx-text)}
+.tnx-command{flex:none;padding:10px 10px 8px;border-bottom:1px solid var(--tnx-line)}.tnx-command-row{display:flex;gap:6px}.tnx-button{height:32px;border:1px solid var(--tnx-line);border-radius:8px;background:var(--tnx-base);padding:0 10px;display:inline-flex;align-items:center;justify-content:center;gap:6px;font-weight:500;white-space:nowrap}.tnx-button:hover{background:var(--tnx-hover)}.tnx-button:disabled{opacity:.45;cursor:default}.tnx-button-primary{flex:1;border-color:color-mix(in srgb,var(--tnx-blue) 32%,var(--tnx-line));background:color-mix(in srgb,var(--tnx-blue) 10%,var(--tnx-base));color:var(--tnx-blue)}.tnx-button-primary:hover{background:color-mix(in srgb,var(--tnx-blue) 15%,var(--tnx-base))}.tnx-view{display:flex;padding:3px;background:var(--tnx-hover);border-radius:8px}.tnx-view button{height:26px;padding:0 8px;border:0;border-radius:6px;background:transparent;color:var(--tnx-muted);font-size:11px}.tnx-view button[data-active=true]{background:var(--tnx-base);box-shadow:0 1px 4px rgba(20,27,42,.08);color:var(--tnx-text)}
+.tnx-search{height:38px;flex:none;display:flex;align-items:center;gap:7px;margin-top:8px;padding:0 9px;border:1px solid var(--tnx-line);border-radius:8px;background:var(--tnx-base);color:var(--tnx-muted)}.tnx-search input{min-width:0;flex:1;border:0;outline:0;background:transparent;font-size:12px}.tnx-search-count{font-size:10px;font-variant-numeric:tabular-nums}.tnx-body{flex:1;min-height:0;overflow-y:auto;padding:6px 6px 14px;scrollbar-width:thin}.tnx-loading,.tnx-empty{min-height:180px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:var(--tnx-muted);padding:24px 18px}.tnx-empty strong{margin:8px 0 3px;color:var(--tnx-text);font-size:13px}.tnx-empty span{font-size:11px;line-height:1.55}.tnx-spinner{width:18px;height:18px;border:2px solid var(--tnx-line);border-top-color:var(--tnx-blue);border-radius:50%;animation:tnx-spin .8s linear infinite}
+.tnx-tab-row{width:100%;min-height:58px;display:grid;grid-template-columns:24px minmax(0,1fr);gap:9px;padding:8px;border:0;border-radius:9px;background:transparent;text-align:left;position:relative}.tnx-tab-row:hover{background:var(--tnx-hover)}.tnx-tab-row[data-active=true]{background:var(--tnx-active)}.tnx-favicon{width:20px;height:20px;margin-top:1px;border-radius:5px;object-fit:contain;background:var(--tnx-base)}.tnx-favicon-fallback{width:20px;height:20px;margin-top:1px;border-radius:5px;display:grid;place-items:center;background:var(--tnx-hover);color:var(--tnx-muted);font-size:10px;font-weight:600}.tnx-tab-copy{min-width:0}.tnx-tab-title{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;font-weight:500;line-height:18px}.tnx-tab-meta{display:flex;align-items:center;gap:5px;margin-top:2px;min-width:0;color:var(--tnx-muted);font-size:10px}.tnx-tab-domain{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tnx-pin{flex:none}.tnx-assignment{height:24px;max-width:112px;margin-top:5px;border:1px solid var(--tnx-line);border-radius:6px;background:var(--tnx-base);padding:0 5px;color:var(--tnx-secondary);font-size:10px}.tnx-live-dot{position:absolute;top:12px;right:9px;width:5px;height:5px;border-radius:50%;background:var(--tnx-blue)}
+.tnx-section{margin:4px 0 10px}.tnx-section-head{height:30px;display:flex;align-items:center;gap:7px;padding:0 8px;color:var(--tnx-secondary);font-size:11px;font-weight:600}.tnx-section-dot{width:7px;height:7px;border-radius:50%}.tnx-section-count{margin-left:auto;color:var(--tnx-muted);font-variant-numeric:tabular-nums;font-weight:400}.tnx-add-category{width:100%;height:34px;border:1px dashed var(--tnx-line);border-radius:8px;background:transparent;color:var(--tnx-muted)}.tnx-add-category:hover{background:var(--tnx-hover);color:var(--tnx-text)}.tnx-new-category{display:flex;gap:6px;padding:5px}.tnx-input,.tnx-textarea{width:100%;border:1px solid var(--tnx-line);border-radius:8px;background:var(--tnx-base);outline:0}.tnx-input{height:32px;padding:0 9px}.tnx-textarea{min-height:68px;resize:vertical;padding:8px 9px;line-height:1.5}.tnx-input:focus,.tnx-textarea:focus,.tnx-assignment:focus{border-color:color-mix(in srgb,var(--tnx-blue) 60%,var(--tnx-line));box-shadow:0 0 0 2px color-mix(in srgb,var(--tnx-blue) 10%,transparent)}
+.tnx-organizer{flex:none;padding:10px;border-bottom:1px solid var(--tnx-line);background:color-mix(in srgb,var(--tnx-hover) 55%,var(--tnx-base))}.tnx-organizer-title{display:flex;align-items:center;gap:6px;font-weight:600;margin-bottom:3px}.tnx-organizer-help{margin:0 0 8px;color:var(--tnx-muted);font-size:10px}.tnx-organizer-actions{display:flex;gap:6px;margin-top:7px}.tnx-preview-head{padding:10px 10px 6px}.tnx-preview-head strong{display:block}.tnx-preview-head span{color:var(--tnx-muted);font-size:10px}.tnx-preview-categories{display:flex;flex-wrap:wrap;gap:4px;padding:0 10px 8px}.tnx-preview-chip{padding:2px 7px;border-radius:999px;background:var(--tnx-hover);color:var(--tnx-secondary);font-size:10px}.tnx-preview-actions{display:flex;gap:6px;padding:8px 10px;border-top:1px solid var(--tnx-line);background:var(--tnx-bg)}
+.tnx-toast{position:fixed;z-index:90;right:294px;top:16px;max-width:320px;padding:8px 11px;border-radius:8px;background:rgba(24,29,39,.92);box-shadow:0 8px 24px rgba(0,0,0,.16);color:white;font-size:11px;animation:tnx-toast .16s ease}.tnx-header-bridge{display:none}
+@keyframes tnx-in{from{transform:translateX(18px);opacity:.55}}@keyframes tnx-spin{to{transform:rotate(360deg)}}@keyframes tnx-toast{from{opacity:0;transform:translateY(-5px)}}
+@media(max-width:720px){.tnx-entry{right:82px}.tnx-toast{right:12px;top:auto;bottom:12px}}
 @media(prefers-reduced-motion:reduce){.tnx-root *{animation-duration:.001ms!important;transition-duration:.001ms!important}}
 `;
 
-function svg(path: string, size = 16): ReactNode {
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={path}/></svg>;
-}
-const Icons = {
-  close: svg("M18 6 6 18M6 6l12 12"),
-  expand: svg("M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"),
-  search: svg("m21 21-4.35-4.35M19 11a8 8 0 1 1-16 0 8 8 0 0 1 16 0"),
-  more: svg("M5 12h.01M12 12h.01M19 12h.01"),
-  external: svg("M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"),
-  layers: svg("m12 2 9 5-9 5-9-5 9-5Zm9 10-9 5-9-5m18 5-9 5-9-5", 18)
-};
-
-type DialogState =
-  | { kind: "task" }
-  | { kind: "category"; category?: Category }
-  | { kind: "page"; page: PageItem }
-  | { kind: "meta" }
-  | { kind: "delete-page"; page: PageItem }
-  | { kind: "delete-category"; category: Category }
-  | { kind: "delete-task" };
-
-function Dialog({ state, task, onClose, onSubmit }: { state: DialogState; task: Task; onClose: () => void; onSubmit: (values: Record<string, string>) => void }) {
-  const page = "page" in state ? state.page : undefined;
-  const category = "category" in state ? state.category : undefined;
-  const [name, setName] = useState(state.kind === "meta" ? task.name : state.kind === "page" ? page?.title ?? "" : category?.name ?? "");
-  const [value, setValue] = useState(state.kind === "meta" ? task.goal : state.kind === "page" ? page?.note ?? "" : "");
-  const destructive = state.kind.startsWith("delete-");
-  const title = state.kind === "task" ? "新建任务" : state.kind === "category" ? (category ? "编辑分类" : "新建分类") : state.kind === "page" ? "编辑网页" : state.kind === "meta" ? "任务设置" : "确认删除";
-  const description = state.kind === "delete-page" ? `「${state.page.title}」会从当前任务中删除。` : state.kind === "delete-category" ? `删除「${state.category.name}」后，其中网页会移到未分类。` : state.kind === "delete-task" ? `「${task.name}」及其中的网页会被永久删除。` : "";
-  const submit = (): void => onSubmit(destructive ? { confirm: "true" } : state.kind === "page" || state.kind === "meta" ? { name, value } : { name });
-  return createPortal(<div className="tnx-root tnx-dialog-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <div className="tnx-dialog" role="dialog" aria-modal="true" aria-label={title}><h3>{title}</h3>{description && <p>{description}</p>}<div className="tnx-dialog-fields">
-      {!destructive && <input autoFocus className="tnx-input" value={name} onChange={(event) => setName(event.target.value)} placeholder={state.kind === "task" ? "例如：AI 行业调研" : state.kind === "category" ? "例如：竞品资料" : "名称"} onKeyDown={(event) => { if (event.key === "Enter" && state.kind !== "page" && state.kind !== "meta") submit(); }}/>}
-      {(state.kind === "page" || state.kind === "meta") && <textarea className="tnx-textarea" value={value} onChange={(event) => setValue(event.target.value)} placeholder={state.kind === "meta" ? "这个任务要完成什么？" : "记录这页的重点或用途…"}/>}
-    </div><div className="tnx-dialog-actions"><button className="tnx-button" onClick={onClose}>取消</button><button className={`tnx-button ${destructive ? "tnx-button-danger" : "tnx-button-primary"}`} disabled={!destructive && !name.trim()} onClick={submit}>{destructive ? "确认删除" : "保存"}</button></div></div>
-  </div>, document.body);
+function Favicon({ tab }: { tab: BrowserTab }) {
+  const [failed, setFailed] = useState(false);
+  if (!tab.favicon || failed) return <span className="tnx-favicon-fallback">{shortDomain(tab.url).slice(0, 1).toLocaleUpperCase()}</span>;
+  return <img className="tnx-favicon" src={tab.favicon} alt="" onError={() => setFailed(true)}/>;
 }
 
-const STATUS_LABELS: Record<PageStatus, string> = { todo: "待处理", doing: "进行中", done: "已完成" };
-
-function PageRow({ page, task, onEdit, onDelete }: { page: PageItem; task: Task; onEdit: () => void; onDelete: () => void }) {
-  const update = (patch: Partial<PageItem>): void => saveState((draft) => { Object.assign(draft.tasks[draft.activeTaskId].pages[page.id], patch); });
-  return <article className="tnx-page"><div className="tnx-page-main"><div className="tnx-favicon">{domainOf(page.url).slice(0, 1)}</div><div><a className="tnx-page-title" href={page.url} target="_blank" rel="noreferrer">{page.title}</a><div className="tnx-domain">{domainOf(page.url)}</div></div><select className="tnx-status" aria-label="网页状态" value={page.status} onChange={(event) => update({ status: event.target.value as PageStatus })}>{Object.entries(STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>
-    <div className="tnx-page-foot"><span className="tnx-note">{page.note || "添加备注，保留这页的用途"}</span><details className="tnx-more"><summary className="tnx-icon" aria-label="更多操作">{Icons.more}</summary><div className="tnx-menu"><button onClick={() => window.open(page.url, "_blank", "noopener,noreferrer")}>{Icons.external}&nbsp;&nbsp;在浏览器打开</button><button onClick={onEdit}>编辑标题与备注</button><label><select className="tnx-select" aria-label="移动分类" value={page.categoryId ?? ""} onChange={(event) => update({ categoryId: event.target.value || null })}><option value="">移到未分类</option>{task.categoryOrder.map((id) => task.categories[id]).filter(Boolean).map((item) => <option key={item.id} value={item.id}>移到：{item.name}</option>)}</select></label><button className="danger" onClick={onDelete}>删除网页</button></div></details></div>
-  </article>;
+function TabRow({ tab, revision, organizer, proposal, onProposalChange, onError }: {
+  tab: BrowserTab;
+  revision: string;
+  organizer: OrganizerState;
+  proposal?: Proposal;
+  onProposalChange?: (tabId: number, category: string) => void;
+  onError: (message: string) => void;
+}) {
+  const assignedId = organizer.assignments[normalizedUrl(tab.url)] ?? "";
+  const proposed = proposal?.assignments[tab.tabId];
+  const focus = async (): Promise<void> => {
+    try { await focusChromeTab(tab.tabId, revision); } catch (error) { onError(error instanceof Error ? error.message : String(error)); }
+  };
+  return <div className="tnx-tab-row" data-active={tab.active} role="button" tabIndex={0} onDoubleClick={() => void focus()} onKeyDown={(event) => { if (event.key === "Enter") void focus(); }}>
+    <Favicon tab={tab}/><div className="tnx-tab-copy"><button type="button" className="tnx-tab-title" title="切换到此 Chrome 标签" onClick={() => void focus()} style={{ border: 0, padding: 0, background: "transparent", width: "100%", textAlign: "left" }}>{tab.title || domainOf(tab.url)}</button>
+      <div className="tnx-tab-meta"><span className="tnx-tab-domain">{domainOf(tab.url)}</span>{tab.pinned && <span className="tnx-pin">已固定</span>}</div>
+      {proposal ? <select className="tnx-assignment" aria-label="建议分类" value={proposed} onChange={(event) => onProposalChange?.(tab.tabId, event.target.value)}>{proposal.categories.map((name) => <option key={name} value={name}>{name}</option>)}</select>
+        : <select className="tnx-assignment" aria-label="标签分类" value={assignedId} onChange={(event) => updateOrganizer((next) => { const key = normalizedUrl(tab.url); if (event.target.value) next.assignments[key] = event.target.value; else delete next.assignments[key]; })}><option value="">未分类</option>{organizer.categoryOrder.flatMap((id) => organizer.categories[id] ? [<option key={id} value={id}>{organizer.categories[id].name}</option>] : [])}</select>}
+    </div>{tab.active && <span className="tnx-live-dot" title="当前标签"/>}
+  </div>;
 }
 
-function FlowView({ task }: { task: Task }) {
-  const pages = Object.values(task.pages);
-  const stages: PageStatus[] = ["todo", "doing", "done"];
-  return <div className="tnx-flow"><div className="tnx-flow-guide">{stages.map((stage, index) => <span key={stage} style={{ display: "contents" }}><div className="tnx-flow-node" data-stage={stage}><div className="tnx-flow-value">{pages.filter((page) => page.status === stage).length}</div><div className="tnx-flow-label">{STATUS_LABELS[stage]}</div></div>{index < stages.length - 1 && <div className="tnx-flow-arrow">→</div>}</span>)}</div><div className="tnx-flow-list">{pages.map((page) => { const category = page.categoryId ? task.categories[page.categoryId] : undefined; return <div className="tnx-flow-card" key={page.id}><span className="tnx-flow-card-dot" style={{ background: category?.color ?? "#9aa3b5" }}/><div><div className="tnx-flow-card-title">{page.title}</div><div className="tnx-flow-card-meta">{category?.name ?? "未分类"} · {domainOf(page.url)}</div></div><select className="tnx-status" aria-label="流程状态" value={page.status} onChange={(event) => saveState((draft) => { draft.tasks[draft.activeTaskId].pages[page.id].status = event.target.value as PageStatus; })}>{Object.entries(STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>; })}{!pages.length && <div className="tnx-empty"><div className="tnx-empty-icon">→</div><strong>流程还没有网页</strong><span>切回分类视图，先添加一条资料。</span></div>}</div></div>;
+function sendOrganizerPrompt(tabs: BrowserTab[], instruction: string): "sent" | "draft_busy" | "no_session" {
+  if (!inputBridge) return "no_session";
+  if (inputBridge.draft.trim()) return "draft_busy";
+  const list = tabs.slice(0, 50).map((tab, index) => `${index + 1}. ${tab.title} — ${domainOf(tab.url)} — ${tab.url}`).join("\n");
+  const prompt = `请帮我整理当前 Chrome 标签。分类要求：${instruction || "按任务上下文与用途清晰分组"}。\n\n标签列表：\n${list}\n\n请仅依据标题、域名和 URL 给出简洁的分类建议，不要声称读过网页正文。先列分类，再说明每个标签应放到哪里。TabNexus 已在右侧生成可编辑预览，我会确认后应用。`;
+  inputBridge.actions.setDraft(prompt);
+  window.setTimeout(() => inputBridge?.actions.submit(), 80);
+  return "sent";
 }
 
-function Workspace({ mode, onClose, onExpand }: { mode: "dock" | "expanded"; onClose: () => void; onExpand?: () => void }) {
-  const state = useLocalState();
-  const task = state.tasks[state.activeTaskId];
-  const [view, setView] = useState<ViewMode>(() => localStorage.getItem(VIEW_KEY) === "flow" ? "flow" : "categories");
-  const [search, setSearch] = useState("");
-  const [url, setUrl] = useState("");
-  const [pageTitle, setPageTitle] = useState("");
-  const [targetCategory, setTargetCategory] = useState("");
-  const [dialog, setDialog] = useState<DialogState | null>(null);
+function TabPanel() {
+  const organizer = useOrganizer();
+  const [snapshot, setSnapshot] = useState<ChromeSnapshot | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [toast, setToast] = useState("");
+  const [query, setQuery] = useState("");
+  const [view, setView] = useState<"flat" | "grouped">("flat");
+  const [organizerOpen, setOrganizerOpen] = useState(false);
+  const [instruction, setInstruction] = useState("");
+  const [proposal, setProposal] = useState<Proposal | null>(null);
+  const [addingCategory, setAddingCategory] = useState(false);
+  const [categoryName, setCategoryName] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
-  useEffect(() => { localStorage.setItem(VIEW_KEY, view); }, [view]);
-  useEffect(() => { if (!toast) return; const timer = window.setTimeout(() => setToast(""), 2400); return () => window.clearTimeout(timer); }, [toast]);
-  useEffect(() => { const key = (event: KeyboardEvent): void => { if (event.key === "Escape" && dialog) setDialog(null); if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "k") { event.preventDefault(); searchRef.current?.focus(); } }; document.addEventListener("keydown", key); return () => document.removeEventListener("keydown", key); }, [dialog]);
-  const pages = useMemo(() => { const query = search.trim().toLocaleLowerCase(); return Object.values(task.pages).filter((page) => !query || `${page.title} ${page.url} ${page.note}`.toLocaleLowerCase().includes(query)); }, [search, task.pages]);
-  const completed = Object.values(task.pages).filter((page) => page.status === "done").length;
-  const percent = Object.keys(task.pages).length ? Math.round(completed / Object.keys(task.pages).length * 100) : 0;
-  const addPage = (): void => {
-    try {
-      const normalized = normalizeUrl(url);
-      if (Object.values(task.pages).some((page) => normalizeUrl(page.url) === normalized)) { setToast("这个网页已经在当前任务中"); return; }
-      const id = uid("page");
-      saveState((draft) => { draft.tasks[draft.activeTaskId].pages[id] = { id, title: pageTitle.trim() || domainOf(normalized), url: normalized, note: "", status: "todo", categoryId: targetCategory || null, createdAt: new Date().toISOString() }; });
-      setUrl(""); setPageTitle(""); setToast("网页已添加");
-    } catch (reason) { setToast(reason instanceof Error ? reason.message : "无法添加网页"); }
+
+  const refresh = useCallback(async (quiet = false): Promise<void> => {
+    if (!quiet) setLoading(true);
+    try { setSnapshot(await fetchChromeTabs()); setError(""); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { void refresh(); const timer = window.setInterval(() => void refresh(true), 3_000); return () => window.clearInterval(timer); }, [refresh]);
+  useEffect(() => { if (!toast) return; const timer = window.setTimeout(() => setToast(""), 2_600); return () => window.clearTimeout(timer); }, [toast]);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") { if (proposal) setProposal(null); else if (organizerOpen) setOrganizerOpen(false); else setPanelOpen(false); }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "k") { event.preventDefault(); searchRef.current?.focus(); }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [organizerOpen, proposal]);
+
+  const tabs = useMemo(() => {
+    const value = query.trim().toLocaleLowerCase();
+    return (snapshot?.tabs ?? []).filter((tab) => !value || `${tab.title} ${tab.url}`.toLocaleLowerCase().includes(value));
+  }, [query, snapshot?.tabs]);
+
+  const beginOrganize = (): void => {
+    const allTabs = snapshot?.tabs ?? [];
+    if (!allTabs.length) { setToast("当前窗口没有可整理的网页标签"); return; }
+    const next = createProposal(allTabs, instruction.trim());
+    setProposal(next);
+    setOrganizerOpen(false);
+    const status = sendOrganizerPrompt(allTabs, instruction.trim());
+    setToast(status === "sent" ? "DSH 正在当前对话复核；右侧可先编辑预览" : status === "draft_busy" ? "输入框已有内容，已保留草稿并生成本地预览" : "已生成整理预览；进入 DSH 对话可启用语义复核");
   };
-  const submitDialog = (values: Record<string, string>): void => {
-    if (!dialog) return;
-    if (dialog.kind === "task") saveState((draft) => { const next = makeTask(values.name.trim()); draft.tasks[next.id] = next; draft.taskOrder.push(next.id); draft.activeTaskId = next.id; });
-    if (dialog.kind === "category") saveState((draft) => { const active = draft.tasks[draft.activeTaskId]; if (dialog.category) active.categories[dialog.category.id].name = values.name.trim(); else { const id = uid("category"); active.categories[id] = { id, name: values.name.trim(), color: COLORS[active.categoryOrder.length % COLORS.length] }; active.categoryOrder.push(id); } });
-    if (dialog.kind === "page") saveState((draft) => { Object.assign(draft.tasks[draft.activeTaskId].pages[dialog.page.id], { title: values.name.trim(), note: values.value }); });
-    if (dialog.kind === "meta") saveState((draft) => { Object.assign(draft.tasks[draft.activeTaskId], { name: values.name.trim(), goal: values.value }); });
-    if (dialog.kind === "delete-page") saveState((draft) => { delete draft.tasks[draft.activeTaskId].pages[dialog.page.id]; });
-    if (dialog.kind === "delete-category") saveState((draft) => { const active = draft.tasks[draft.activeTaskId]; delete active.categories[dialog.category.id]; active.categoryOrder = active.categoryOrder.filter((id) => id !== dialog.category.id); for (const page of Object.values(active.pages)) if (page.categoryId === dialog.category.id) page.categoryId = null; });
-    if (dialog.kind === "delete-task") saveState((draft) => { if (draft.taskOrder.length === 1) return; delete draft.tasks[draft.activeTaskId]; draft.taskOrder = draft.taskOrder.filter((id) => id !== draft.activeTaskId); draft.activeTaskId = draft.taskOrder[0]; });
-    setDialog(null); setToast("已保存");
+
+  const applyProposal = (): void => {
+    if (!proposal || !snapshot) return;
+    updateOrganizer((next) => {
+      const idByName = new Map(Object.values(next.categories).map((category) => [category.name, category.id]));
+      for (const name of proposal.categories) {
+        if (idByName.has(name)) continue;
+        const id = uid("category");
+        next.categories[id] = { id, name, color: COLORS[next.categoryOrder.length % COLORS.length] };
+        next.categoryOrder.push(id);
+        idByName.set(name, id);
+      }
+      for (const tab of snapshot.tabs) {
+        const categoryId = idByName.get(proposal.assignments[tab.tabId]);
+        if (categoryId) next.assignments[normalizedUrl(tab.url)] = categoryId;
+      }
+    });
+    setProposal(null);
+    setView("grouped");
+    setToast("分类已应用到当前标签");
   };
-  const renderSection = (category: Category | null): ReactNode => {
-    const sectionPages = pages.filter((page) => category ? page.categoryId === category.id : !page.categoryId || !task.categories[page.categoryId]);
-    if (search && !sectionPages.length) return null;
-    return <section className="tnx-section" key={category?.id ?? "uncategorized"}><header className="tnx-section-head"><span className="tnx-section-dot" style={{ color: category?.color ?? "#9aa3b5", background: category?.color ?? "#9aa3b5" }}/><span className="tnx-section-name">{category?.name ?? "未分类"}</span><span className="tnx-section-count">{sectionPages.length}</span><span className="tnx-spacer"/>{category && <details className="tnx-more"><summary className="tnx-icon" aria-label="分类操作">{Icons.more}</summary><div className="tnx-menu"><button onClick={() => setDialog({ kind: "category", category })}>重命名分类</button><button className="danger" onClick={() => setDialog({ kind: "delete-category", category })}>删除分类</button></div></details>}</header>{sectionPages.map((page) => <PageRow key={page.id} page={page} task={task} onEdit={() => setDialog({ kind: "page", page })} onDelete={() => setDialog({ kind: "delete-page", page })}/>)}</section>;
+
+  const addCategory = (): void => {
+    const name = categoryName.trim();
+    if (!name) return;
+    if (Object.values(organizer.categories).some((category) => category.name === name)) { setToast("这个分类已经存在"); return; }
+    updateOrganizer((next) => { const id = uid("category"); next.categories[id] = { id, name, color: COLORS[next.categoryOrder.length % COLORS.length] }; next.categoryOrder.push(id); });
+    setCategoryName("");
+    setAddingCategory(false);
   };
-  return <section className="tnx-root tnx-panel" data-mode={mode} aria-label="TabNexus 工作区"><header className="tnx-head"><div className="tnx-brand"><div className="tnx-logo">{Icons.layers}</div><div><div className="tnx-brand-title">TabNexus</div><div className="tnx-brand-sub">LOCAL TASK SPACE</div></div></div><div className="tnx-spacer"/>{mode === "dock" && <button className="tnx-icon" title="展开工作区" onClick={onExpand}>{Icons.expand}</button>}<button className="tnx-icon" title="关闭" onClick={onClose}>{Icons.close}</button></header>
-    <div className="tnx-toolbar"><select className="tnx-select tnx-task-select" aria-label="当前任务" value={state.activeTaskId} onChange={(event) => saveState((draft) => { draft.activeTaskId = event.target.value; })}>{state.taskOrder.map((id) => state.tasks[id]).filter(Boolean).map((item) => <option key={item.id} value={item.id}>{item.name} · {Object.keys(item.pages).length}</option>)}</select><button className="tnx-button" onClick={() => setDialog({ kind: "task" })}>＋ 任务</button></div>
-    <div className="tnx-switch"><button data-active={view === "categories"} onClick={() => setView("categories")}>分类</button><button data-active={view === "flow"} onClick={() => setView("flow")}>流程</button></div>
-    <main className="tnx-body"><section className="tnx-context"><div className="tnx-context-row"><div className="tnx-context-copy"><p className="tnx-goal" data-empty={!task.goal}>{task.goal || "给这个任务写一个清晰目标"}</p><div className="tnx-summary">{Object.keys(task.pages).length} 个网页 · {task.categoryOrder.length} 个分类 · {completed} 个已完成</div></div><div className="tnx-context-actions"><button className="tnx-mini" onClick={() => setDialog({ kind: "meta" })}>设置</button>{state.taskOrder.length > 1 && <button className="tnx-mini" onClick={() => setDialog({ kind: "delete-task" })}>删除</button>}</div><div><div className="tnx-progress">{percent}%</div><div className="tnx-progress-label">任务进度</div></div></div><div className="tnx-track"><span style={{ width: `${percent}%` }}/></div></section>
-      {view === "categories" ? <><div className="tnx-search"><span className="tnx-search-icon">{Icons.search}</span><input ref={searchRef} className="tnx-input" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索标题、域名或备注  ⌘K"/><span className="tnx-count">{pages.length} 页</span></div><section className="tnx-add"><div className="tnx-add-row"><input className="tnx-input" value={url} onChange={(event) => setUrl(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") addPage(); }} placeholder="粘贴 http(s) 网页地址"/><button className="tnx-button tnx-button-primary" disabled={!url.trim()} onClick={addPage}>添加</button></div><div className="tnx-add-more"><input className="tnx-input" value={pageTitle} onChange={(event) => setPageTitle(event.target.value)} placeholder="标题（可选）"/><select className="tnx-select" value={targetCategory} onChange={(event) => setTargetCategory(event.target.value)}><option value="">未分类</option>{task.categoryOrder.map((id) => task.categories[id]).filter(Boolean).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div></section>{task.categoryOrder.map((id) => task.categories[id]).filter(Boolean).map((category) => renderSection(category))}{renderSection(null)}{!pages.length && search && <div className="tnx-empty"><div className="tnx-empty-icon">⌕</div><strong>没有匹配的网页</strong><span>换个关键词试试。</span></div>} {!search && <button className="tnx-add-category" onClick={() => setDialog({ kind: "category" })}>＋ 新建分类</button>}</> : <FlowView task={task}/>}
-    </main>{dialog && <Dialog state={dialog} task={task} onClose={() => setDialog(null)} onSubmit={submitDialog}/>} {toast && createPortal(<div className="tnx-root tnx-toast" role="status">{toast}</div>, document.body)}</section>;
+
+  const renderTabs = (items: BrowserTab[], currentProposal?: Proposal): ReactNode => items.map((tab) => <TabRow key={tab.tabId} tab={tab} revision={snapshot?.revision ?? ""} organizer={organizer} proposal={currentProposal} onProposalChange={(tabId, category) => setProposal((current) => current ? { ...current, assignments: { ...current.assignments, [tabId]: category } } : null)} onError={(message) => { setToast(message); if (message.includes("changed")) void refresh(true); }}/>);
+
+  return <aside className="tnx-root tnx-panel" aria-label="TabNexus Chrome 标签管理器">
+    <header className="tnx-panel-head"><span style={{ color: "var(--tnx-secondary)", display: "grid" }}>{Icons.tabs}</span><div className="tnx-title-wrap"><div className="tnx-title">TabNexus</div><div className="tnx-subtitle">{error ? "Chrome 未连接" : `${snapshot?.tabs.length ?? 0} 个当前标签${snapshot?.unsupported ? ` · ${snapshot.unsupported} 个不支持` : ""}`}</div></div><button className="tnx-icon" title="同步 Chrome 标签" onClick={() => void refresh()}>{Icons.refresh}</button><button className="tnx-icon" title="关闭" onClick={() => setPanelOpen(false)}>{Icons.close}</button></header>
+    {!proposal && <div className="tnx-command"><div className="tnx-command-row"><button className="tnx-button tnx-button-primary" onClick={() => setOrganizerOpen((value) => !value)}>{Icons.sparkle} 一键整理</button><div className="tnx-view" aria-label="显示方式"><button data-active={view === "flat"} onClick={() => setView("flat")}>全部</button><button data-active={view === "grouped"} onClick={() => setView("grouped")}>分类</button></div></div><label className="tnx-search">{Icons.search}<input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索标签  ⌘K"/><span className="tnx-search-count">{tabs.length}</span></label></div>}
+    {organizerOpen && !proposal && <section className="tnx-organizer"><div className="tnx-organizer-title">{Icons.sparkle}<span>让 DSH 帮你梳理</span></div><p className="tnx-organizer-help">输入你想要的分类方式；同时生成可编辑预览，不会直接覆盖。</p><textarea autoFocus className="tnx-textarea" value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="例如：按公司和求职阶段分类；或分类为：岗位、投递记录、文档、工具"/><div className="tnx-organizer-actions"><button className="tnx-button" onClick={() => setOrganizerOpen(false)}>取消</button><button className="tnx-button tnx-button-primary" onClick={beginOrganize}>开始整理</button></div></section>}
+    {proposal ? <><div className="tnx-preview-head"><strong>整理预览</strong><span>{snapshot?.tabs.length ?? 0} 个标签 · 确认后才应用</span></div><div className="tnx-preview-categories">{proposal.categories.map((category) => <span className="tnx-preview-chip" key={category}>{category}</span>)}</div><main className="tnx-body">{renderTabs((snapshot?.tabs ?? []).filter((tab) => !query || `${tab.title} ${tab.url}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())), proposal)}</main><div className="tnx-preview-actions"><button className="tnx-button" onClick={() => setProposal(null)}>取消</button><button className="tnx-button tnx-button-primary" onClick={applyProposal}>{Icons.check} 应用分类</button></div></>
+      : <main className="tnx-body">{loading && !snapshot ? <div className="tnx-loading"><span className="tnx-spinner"/></div> : error ? <div className="tnx-empty"><span style={{ color: "var(--tnx-secondary)" }}>{Icons.tabs}</span><strong>还没有同步到 Chrome</strong><span>{error}<br/>打开 TabNexus Chrome 扩展并启用“本地 Agent 桥”，然后重试。</span><button className="tnx-button" style={{ marginTop: 12 }} onClick={() => void refresh()}>重新连接</button></div> : !tabs.length ? <div className="tnx-empty"><span style={{ color: "var(--tnx-secondary)" }}>{Icons.search}</span><strong>{query ? "没有匹配的标签" : "当前窗口没有网页标签"}</strong><span>{query ? "换一个标题或域名关键词。" : "打开 Chrome 网页后会自动出现在这里。"}</span></div> : view === "flat" ? renderTabs(tabs) : <>{organizer.categoryOrder.map((id) => { const category = organizer.categories[id]; if (!category) return null; const items = tabs.filter((tab) => organizer.assignments[normalizedUrl(tab.url)] === id); if (!items.length) return null; return <section className="tnx-section" key={id}><header className="tnx-section-head"><span className="tnx-section-dot" style={{ background: category.color }}/><span>{category.name}</span><span className="tnx-section-count">{items.length}</span></header>{renderTabs(items)}</section>; })}<section className="tnx-section"><header className="tnx-section-head"><span className="tnx-section-dot" style={{ background: "var(--tnx-muted)" }}/><span>未分类</span><span className="tnx-section-count">{tabs.filter((tab) => !organizer.categories[organizer.assignments[normalizedUrl(tab.url)]]).length}</span></header>{renderTabs(tabs.filter((tab) => !organizer.categories[organizer.assignments[normalizedUrl(tab.url)]]))}</section>{addingCategory ? <div className="tnx-new-category"><input autoFocus className="tnx-input" value={categoryName} onChange={(event) => setCategoryName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") addCategory(); if (event.key === "Escape") setAddingCategory(false); }} placeholder="分类名称"/><button className="tnx-button" onClick={addCategory}>添加</button></div> : <button className="tnx-add-category" onClick={() => setAddingCategory(true)}>{Icons.plus} 新建分类</button>}</>}</main>}
+    {toast && <div className="tnx-toast" role="status">{toast}</div>}
+  </aside>;
+}
+
+type InputBridgeProps = PropsRuntime<"conversation.input.left">;
+function SessionInputBridge(props: InputBridgeProps) {
+  const draft = props.useInput((state) => state.draft);
+  useEffect(() => {
+    const next: InputBridge = { sessionId: String(props.sessionId), draft, actions: props.inputActions };
+    inputBridge = next;
+    return () => { if (inputBridge === next) inputBridge = null; };
+  }, [draft, props.inputActions, props.sessionId]);
+  return <span className="tnx-header-bridge" aria-hidden="true"/>;
 }
 
 type OverlayProps = PropsRuntime<"shell.overlay">;
 function TabNexusOverlay(_props: OverlayProps) {
-  const state = useLocalState();
-  const task = state.tasks[state.activeTaskId];
-  const [open, setOpen] = useState(() => localStorage.getItem(DOCK_KEY) === "true");
-  const [expanded, setExpanded] = useState(false);
-  useEffect(() => { localStorage.setItem(DOCK_KEY, String(open)); }, [open]);
-  useEffect(() => { const onStorage = (event: StorageEvent): void => { if (event.key === STORAGE_KEY) { currentState = loadState(); for (const listener of stateListeners) listener(); } }; window.addEventListener("storage", onStorage); return () => window.removeEventListener("storage", onStorage); }, []);
-  useEffect(() => { const key = (event: KeyboardEvent): void => { if (event.key === "Escape") { if (expanded) setExpanded(false); else if (open) setOpen(false); } }; document.addEventListener("keydown", key); return () => document.removeEventListener("keydown", key); }, [expanded, open]);
-  const expand = (): void => { setOpen(false); setExpanded(true); };
-  return <div className="tnx-root"><style>{CSS}</style><button className="tnx-chip" onClick={() => setOpen((value) => !value)} aria-expanded={open}><span className="tnx-chip-dot"/><span className="tnx-chip-label">TabNexus</span><span className="tnx-chip-task">{task.name}</span><span className="tnx-chip-arrow">▾</span></button>{open && <>{createPortal(<div className="tnx-root tnx-scrim" onClick={() => setOpen(false)}/>, document.body)}{createPortal(<Workspace mode="dock" onClose={() => setOpen(false)} onExpand={expand}/>, document.body)}</>}{expanded && createPortal(<><div className="tnx-root tnx-scrim"/><Workspace mode="expanded" onClose={() => setExpanded(false)}/></>, document.body)}</div>;
+  const open = usePanelOpen();
+  useEffect(() => {
+    const onStorage = (event: StorageEvent): void => {
+      if (event.key === STORAGE_KEY) { organizerState = loadOrganizer(); for (const listener of organizerListeners) listener(); }
+      if (event.key === PANEL_KEY) { panelOpen = event.newValue === "true"; for (const listener of panelListeners) listener(); }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+  return <div className="tnx-root"><style>{CSS}</style>{!open && <button className="tnx-entry" data-open={open} title="打开 TabNexus 标签管理器" aria-label="打开 TabNexus 标签管理器" onClick={() => setPanelOpen(true)}>{Icons.tabs}</button>}</div>;
 }
 
 export function apply(ctx: ClientContext): void {
-  ctx.slots.inject("shell.overlay", () => ctx.slots.register({ name: "shell.overlay", id: "tabnexus:entry", order: 40, label: "TabNexus" }, TabNexusOverlay));
+  ctx.slots.inject("shell.overlay", () => ctx.slots.register({ name: "shell.overlay", id: "tabnexus:overlay", order: 40, label: "TabNexus" }, TabNexusOverlay));
+  ctx.slots.inject("conversation.input.left", () => ctx.slots.register({ name: "conversation.input.left", id: "tabnexus:input-bridge", order: 999, label: "TabNexus input bridge" }, SessionInputBridge));
+  ctx.slots.inject("details", () => {
+    let disposePanel: (() => void) | null = null;
+    const control = (open: boolean): void => {
+      if (open && !disposePanel) {
+        disposePanel = ctx.slots.register({ name: "details", priority: -100 }, TabPanel);
+        ctx.layout.openDetails();
+      } else if (!open && disposePanel) {
+        disposePanel();
+        disposePanel = null;
+        ctx.layout.closeDetails();
+      }
+    };
+    nativePanelController = control;
+    if (panelOpen) queueMicrotask(() => control(true));
+    return () => {
+      if (nativePanelController === control) nativePanelController = null;
+      disposePanel?.();
+      disposePanel = null;
+    };
+  });
 }

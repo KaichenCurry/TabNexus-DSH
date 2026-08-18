@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0
+
+- Rebuilt the product around the current Chrome window instead of a separate task database.
+- Replaced the floating pill and glass card with a small top-right icon and DSH's native adaptive details column.
+- Added live Chrome tab sync, search, tab focus, favicon/title/domain/pinned/active states.
+- Added free-form one-click organization, editable proposals, DSH composer review, and manual categories.
+- Removed the flow view and expanded workspace.
+- Added a loopback-only Host proxy without Agent tools, MCP configuration, model APIs, or API keys.
+
 ## 0.3.0
 
 - Reframed TabNexus-DSH as a small client-only task manager.
