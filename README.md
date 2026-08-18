@@ -1,64 +1,59 @@
 # TabNexus for DSH
 
-> **「一切皆插件 —— 那浏览器里那 50 个 Tab，也该是。」**
-> 诚邀全球 Harness 开发者共建 DSH 插件生态。
+> 在 DeepSeek Harness 里，用最简单的方式管理任务和网页资料。
 
-**TabNexus for DSH** 是 DSH 独立可用的浏览器任务上下文插件：**零 Chrome 依赖，装完即用**。
-把散落的页面收成任务文档（目标 / 章节 / 状态 / 进度 / 结论），Agent 通过 12 个 `mcp__tabnexus__*` 工具读写，界面内置**全局工作区**（与 Chrome 版同款 UI）。
+[English](README.en.md) · [安装](docs/INSTALL.md) · [兼容性](docs/COMPATIBILITY.md) · [架构](docs/ARCHITECTURE.md)
 
-| 能力 | 说明 |
-|---|---|
-| 任务文档 | 任务 / 自由章节 / 页面（待读·已读·已采用·已排除）/ 备注 / 目标 / 结论 / 进度条 |
-| 全局工作区 UI | 右上角徽章 → 小面板 →「⛶ 全屏」：任务头+章节+页面操作 + 收件口快速添加 URL |
-| Agent 工具 | 12 个本地工具：read/search/add_cards/write_report/propose_structure/edit_workspace/manage_workspaces/delete(确认)/export/preferences/activity + 版本校验 + 幂等收据 + 破坏性确认 |
-| 零依赖 | 本地存储 `~/.dsh/storages/tabnexus/state.json`，不需要 Chrome 扩展、不需要账号、不需要网络 |
+TabNexus-DSH 是一个轻量、纯界面、本地优先的 DSH 插件。它只做四件事：
 
-## 安装（30 秒）
+**任务管理 → 分类整理 → 网页状态 → 简单流程**
 
-```bash
-# 下载并安装（需要 pnpm 在 PATH；DSH 提供 dsh plugin 命令）
-curl -LO https://github.com/KaichenCurry/TabNexus-DSH/releases/download/v0.2.0/dsh-plugin-tabnexus-0.2.0.tgz
-dsh plugin --profile web add ./dsh-plugin-tabnexus-0.2.0.tgz
-# 重启 DSH（必须），浏览器页面 Cmd+Shift+R
-```
+DSH 本身就是 AI Agent，因此这个版本不注册 Agent 工具、不提供 MCP、不开放 Host API，也不要求任何模型或 API Key。安装后点击右上角 `TabNexus` 即可使用。
 
-完整图文教程：[docs/INSTALL.md](docs/INSTALL.md)
+![TabNexus-DSH v0.3 流程视图](docs/tabnexus-dsh-v0.3.png)
 
-## 使用（装完即用）
+## v0.3.0
 
-1. **界面**：右上角（session log 按钮下方）TabNexus 徽章 → 点击打开面板 →「⛶ 全屏」进全局工作区；收件口**粘贴 URL 快速添加页面**；
-2. **对话**：任何会话直接说——
-   - 「帮我把这三篇加入我的任务：URL1、URL2、URL3」
-   - 「读一下我的当前任务，告诉我做到哪了、还缺什么」
-   - 「把任务按背景、证据、反例整理，先给我预览」（Agent 会先出方案，确认后应用）
-   - 「总结这个任务，把结论写回」
-3. **可选增强**：安装 [TabNexus Chrome 扩展](https://github.com/KaichenCurry/TabNexus) 可解锁浏览器采集类工具（当前窗口标签采集/保存并关闭）——**不装也完整可用**。
+- 创建、切换、重命名和删除任务；为任务记录一个清晰目标。
+- 通过分类整理网页，支持分类重命名、删除和网页移动。
+- 网页支持标题、URL、备注与“待处理 / 进行中 / 已完成”三种状态。
+- “分类”与“流程”两个视图；流程视图只展示三段式进度，不引入复杂工作流。
+- 使用 DSH 官方 `shell.overlay` Slot：右上角胶囊、玻璃感 Dock、展开工作区和窄屏抽屉。
+- 数据保存在当前 DSH Web Client 的浏览器本地存储中；不上传云端。
+- 只接受 `http://` 和 `https://` 网页，自动去除常见追踪参数并避免重复添加。
 
-## 可选：Agent 预设 + 技能（推荐）
-
-让 Agent 更懂 TabNexus 工作流（先读后写、尊重排除项、破坏性确认）：
+## 安装
 
 ```bash
-mkdir -p ~/.dsh/.agent-presets/tabnexus-research ~/.agents/skills/tabnexus
-cp preset/tabnexus-research/* ~/.dsh/.agent-presets/tabnexus-research/
-cp skills/tabnexus/SKILL.md ~/.agents/skills/tabnexus/
+curl -LO https://github.com/KaichenCurry/TabNexus-DSH/releases/download/v0.3.0/dsh-plugin-tabnexus-0.3.0.tgz
+dsh plugin --profile web add ./dsh-plugin-tabnexus-0.3.0.tgz
 ```
 
-新建会话时预设选「TabNexus Research」。
+重启 DSH Web 服务并刷新 `http://127.0.0.1:3080/`。桌面端使用同一套 Web Client，无需额外安装。
 
-## 验证记录（2026-08-15，全部实测）
+## 使用
 
-| # | 验证 | 结果 |
-|---|---|---|
-| 1 | 离线全链路 `node scripts/verify.mjs`（存储/工具/版本冲突/破坏性确认/幂等/导出/降级） | ✅ 19/19 |
-| 2 | `dsh plugin add` 安装 + `--dump-config` 组合树 | ✅ |
-| 3 | **零 Chrome headless 会话**：Agent 调用 read_workspace / add_cards / edit_workspace 读写本地任务 | ✅ |
+1. 点击右上角 `TabNexus`。
+2. 新建任务并写下目标。
+3. 新建分类，粘贴网页地址。
+4. 随进展把网页从“待处理”切到“进行中”或“已完成”。
+5. 切换到“流程”查看整体推进情况。
 
-## 生态
+## 当前边界
 
-- GitHub Topic：[`dsh-plugin`](https://github.com/topics/dsh-plugin)
-- 插件开发规范参考：[dsh-agent-teams 开发指南](https://github.com/NanmiCoder/dsh-agent-teams/blob/main/docs/developing-dsh-plugins.md)
-- Chrome 扩展版（可选增强）：[KaichenCurry/TabNexus](https://github.com/KaichenCurry/TabNexus)
+- 不接入 Agent，不注册 `mcp__tabnexus__*` 工具。
+- 不提供 `/plugins/tabnexus/*` API 或 SSE。
+- 不读取真实 Chrome 标签，也不批量关闭标签。
+- 不支持 `file://`、本地文件、云同步或 Chrome 双向同步。
+
+## 开发
+
+```bash
+npm install --legacy-peer-deps
+npm run typecheck
+npm test
+npm run pack:check
+```
 
 ## License
 

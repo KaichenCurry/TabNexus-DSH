@@ -1,98 +1,53 @@
 #!/usr/bin/env node
-// dsh-plugin-tabnexus（独立版）离线验证：包结构 + 本地存储/工具全链路（临时目录自清理）
-import { readFile, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { access, readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const root = resolve(import.meta.dirname, "..");
 const checks = [];
-const ok = (name, pass, detail = "") => checks.push({ name, pass: Boolean(pass), detail });
+const ok = (name, pass) => checks.push({ name, pass: Boolean(pass) });
+const missing = async (path) => { try { await access(resolve(root, path)); return false; } catch { return true; } };
 
 const pkg = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
-ok("exports host face", pkg.exports["."]?.default === "./lib/index.js");
-ok("exports client face", typeof pkg.exports["./client"]?.default === "string" && pkg.exports["./client"].default.endsWith("client.js"));
-ok("dsh.bundle.patch declared", typeof pkg.dsh?.bundle?.patch === "string");
-ok("dsh.client platform=web", pkg.dsh?.client?.platform === "web");
-ok("no mcp-client peer (standalone)", !pkg.peerDependencies?.["@deepseek-ai/dsh-mcp-client"]);
-
-const patch = await readFile(resolve(root, "cordis.patch.yml"), "utf8");
-ok("patch inserts tabnexus row", patch.includes("id: tabnexus") && patch.includes("name: dsh-plugin-tabnexus"));
-
-const host = await import(resolve(root, "lib/index.js"));
-ok("host exports name/apply/Config", host.name === "tabnexus" && typeof host.apply === "function" && typeof host.Config === "function");
-
-// ── 存储 + 工具全链路 ──
-const tmp = await mkdtemp(join(tmpdir(), "tabnexus-standalone-"));
-try {
-  const store = new host.Store(join(tmp, "state.json"));
-  const { dispatch } = host.buildToolHandlers(store);
-
-  const initial = await dispatch("mcp__tabnexus__read_workspace", { detail: "full" });
-  ok("first boot seeds default task", initial.revision?.startsWith("wsr_") && initial.workspace?.name === "我的任务");
-
-  const added = await dispatch("mcp__tabnexus__add_card", {
-    title: "DeepSeek 官网", url: "https://www.deepseek.com/", note: "产品定位",
-    expectedRevision: initial.revision, operationId: "verify:add"
-  });
-  ok("add_card persists", added.cardId && added.revision !== initial.revision);
-
-  const edited = await dispatch("mcp__tabnexus__edit_workspace", {
-    expectedRevision: added.revision, operationId: "verify:edit",
-    actions: [
-      { type: "create_group", groupId: "g_market", name: "市场", color: "#7A6EDC" },
-      { type: "move_cards", cardIds: [added.cardId], targetGroupId: "g_market" },
-      { type: "update_card", cardId: added.cardId, status: "adopted" }
-    ]
-  });
-  ok("edit_workspace batch", edited.ok !== false && edited.createdGroupIds?.includes("g_market"));
-
-  const read = await dispatch("mcp__tabnexus__read_workspace", { detail: "summary" });
-  const moved = read.summary?.cards?.find((card) => card.id === added.cardId);
-  ok("card moved + adopted", moved?.groupId === "g_market" && moved?.status === "adopted");
-
-  const since = await dispatch("mcp__tabnexus__read_workspace", { detail: "summary", sinceRevision: read.revision });
-  ok("conditional read unchanged", since.unchanged === true && since.summary === undefined);
-
-  const exported = await dispatch("mcp__tabnexus__export_workspace", { format: "markdown" });
-  ok("markdown export", exported.content?.includes("# 我的任务") && exported.content?.includes("DeepSeek 官网"));
-
-  // 版本冲突保护
-  let conflict = false;
-  try {
-    await dispatch("mcp__tabnexus__edit_workspace", { expectedRevision: "wsr_stale", operationId: "verify:stale", actions: [{ type: "rename_workspace", name: "x" }] });
-  } catch (error) { conflict = /Workspace changed/.test(String(error)); }
-  ok("stale revision rejected", conflict);
-
-  // 破坏性需确认
-  let guard = false;
-  try {
-    await dispatch("mcp__tabnexus__delete_workspace_items", { expectedRevision: read.revision, operationId: "verify:del", cardIds: [added.cardId] });
-  } catch (error) { guard = /confirmation/i.test(String(error)); }
-  ok("destructive guard", guard);
-
-  const del = await dispatch("mcp__tabnexus__delete_workspace_items", {
-    expectedRevision: read.revision, operationId: "verify:del2", cardIds: [added.cardId],
-    confirm: true, confirmationText: "用户确认删除"
-  });
-  ok("delete with confirmation", del.deletedCardIds?.includes(added.cardId));
-
-  const addCards = await dispatch("mcp__tabnexus__add_cards", {
-    cards: [{ title: "A", url: "https://a.example.com" }, { title: "B", url: "https://b.example.com" }],
-    expectedRevision: del.revision, operationId: "verify:batch"
-  });
-  ok("add_cards batch", addCards.addedCardIds?.length === 2);
-
-  const browser = await dispatch("mcp__tabnexus__sync_browser_tabs", { action: "save_tabs", tabIds: [1], expectedRevision: addCards.revision, operationId: "verify:br" }).then(() => false).catch((error) => /可选增强|Chrome/i.test(String(error)));
-  ok("browser tools degrade with guidance", browser);
-} finally {
-  await rm(tmp, { recursive: true, force: true });
-}
-
+const host = await readFile(resolve(root, "lib/index.js"), "utf8");
 const client = await readFile(resolve(root, "lib/client.js"), "utf8");
-ok("client ships workspace panel", client.includes("tn-dsh-ws") && client.includes("快速添加"));
+const readme = await readFile(resolve(root, "README.md"), "utf8");
+const architecture = await readFile(resolve(root, "docs/ARCHITECTURE.md"), "utf8");
+
+ok("release version is 0.3.0", pkg.version === "0.3.0");
+ok("host and client exports exist", pkg.exports["."]?.default === "./lib/index.js" && pkg.exports["./client"]?.default === "./lib/client.js");
+ok("package has no Agent tools dependency", !pkg.peerDependencies?.["@deepseek-ai/dsh-tools"] && !pkg.devDependencies?.["@deepseek-ai/dsh-tools"]);
+ok("package has no MCP dependency", !JSON.stringify(pkg).includes("dsh-mcp-client"));
+ok("package has no optional sidebar dependency", !JSON.stringify(pkg).includes("better-sidebar"));
+ok("Skill and preset are not shipped", !pkg.files.includes("skills") && !pkg.files.includes("preset"));
+
+ok("Host is intentionally client-only", host.includes("client-only") && /inject\s*=\s*\[\]/.test(host));
+ok("Host registers no tools", !host.includes("defineTool") && !host.includes("ctx.tools") && !host.includes("mcp__tabnexus__"));
+ok("Host registers no web routes", !host.includes("webServer") && !host.includes("registerPublicRoutes") && !host.includes("/plugins/tabnexus"));
+ok("stale core output is absent", await missing("lib/core.js") && await missing("lib/types/core.d.ts"));
+ok("stale route output is absent", await missing("lib/routes.js") && await missing("lib/types/routes.d.ts"));
+
+ok("Client uses official shell.overlay slot", client.includes("shell.overlay") && client.includes("tabnexus:entry"));
+ok("Client stores state locally", client.includes("tabnexus:dsh:workspace:v3") && client.includes("localStorage"));
+ok("Client makes no network request", !client.includes("fetch(") && !client.includes("EventSource") && !client.includes("WebSocket"));
+ok("Client has no Agent bridge", !client.includes("mcp__tabnexus__") && !client.includes("sessionBindings"));
+ok("Client has no DOM position guessing", !client.includes("MutationObserver") && !client.includes("querySelector"));
+ok("Client supports tasks", client.includes("新建任务") && client.includes("任务设置") && client.includes("当前任务"));
+ok("Client supports categories", client.includes("新建分类") && client.includes("移动分类") && client.includes("删除分类"));
+ok("Client supports three simple statuses", ["待处理", "进行中", "已完成"].every((label) => client.includes(label)));
+ok("Client supports category and flow views", client.includes("分类") && client.includes("流程") && client.includes("tnx-flow-guide"));
+ok("Client supports page notes and deletion", client.includes("编辑标题与备注") && client.includes("删除网页"));
+ok("Client validates HTTP(S) pages", client.includes('value.protocol !== "http:"') && client.includes('value.protocol !== "https:"'));
+ok("Client strips tracking params", client.includes('startsWith("utm_")') && client.includes("fbclid") && client.includes("searchParams.sort"));
+ok("Client avoids normalized duplicates", client.includes("这个网页已经在当前任务中"));
+ok("Client includes glass and responsive styling", client.includes("backdrop-filter") && client.includes("@media(max-width:640px)"));
+ok("Client respects reduced motion", client.includes("prefers-reduced-motion"));
+ok("Client has Dock and expanded workspace", client.includes('mode: "dock"') && client.includes('mode: "expanded"'));
+
+ok("README explicitly rejects duplicate Agent layer", readme.includes("不注册 Agent 工具") && readme.includes("不提供 MCP") && readme.includes("不开放 Host API"));
+ok("Architecture documents local-only state", architecture.includes("localStorage") && architecture.includes("没有网络请求、SSE 或 Host API"));
+ok("README keeps simple product chain", readme.includes("任务管理 → 分类整理 → 网页状态 → 简单流程"));
 
 const failed = checks.filter((check) => !check.pass);
-for (const check of checks) console.log(`${check.pass ? "PASS" : "FAIL"}  ${check.name}${check.detail ? ` — ${check.detail}` : ""}`);
+for (const check of checks) console.log(`${check.pass ? "PASS" : "FAIL"}  ${check.name}`);
 console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);
 process.exit(failed.length ? 1 : 0);

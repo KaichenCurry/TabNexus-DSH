@@ -1,6 +1,3 @@
-interface ClientContext {
-    effect(callback: () => () => void, label?: string): void;
-}
+import type { ClientContext } from "@deepseek-ai/dsh-client-runtime/client";
 export declare const inject: string[];
 export declare function apply(ctx: ClientContext): void;
-export {};
