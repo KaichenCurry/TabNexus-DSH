@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-tabnexus",
-  "version": "0.2.0",
-  "description": "TabNexus for DSH（独立版）：零 Chrome 依赖的浏览器任务上下文插件。任务文档、自由章节、四态页面、进度、导出、全局工作区 UI，装完即用。",
+  "version": "0.3.0",
+  "description": "TabNexus for DSH：轻量的本地任务、分类、网页资料与流程管理插件。",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
@@ -11,26 +11,39 @@
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
-  "files": ["lib", "cordis.patch.yml", "README.md"],
+  "files": ["lib", "cordis.patch.yml", "README.md", "README.en.md", "CHANGELOG.md", "LICENSE", "docs"],
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },
     "client": { "inject": ["@deepseek-ai/dsh-client-runtime"], "platform": "web" }
   },
-  "keywords": ["dsh-plugin", "tabnexus", "browser", "tabs", "task-context", "deepseek-harness"],
+  "keywords": ["dsh-plugin", "tabnexus", "task-manager", "tab-manager", "workflow", "local-first", "deepseek-harness"],
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/KaichenCurry/TabNexus-DSH.git" },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/schemastery": "^3.18.1",
-    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6"
+    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
+    "react": "^18.3.1"
   },
   "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-client-runtime": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-layout": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-slots": "0.1.0-rc.6",
+    "@deepseek-ai/schemastery": "3.18.1",
+    "@types/node": "^26.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
     "lightningcss": "^1.29.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
     "tsdown": "0.22.0",
     "typescript": "7.0.2"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.client.json && tsdown",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "test": "npm run build && node scripts/verify.mjs",
+    "pack:check": "npm pack --dry-run"
   }
 }
