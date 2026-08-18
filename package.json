@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-tabnexus",
-  "version": "0.4.0",
+  "version": "0.4.2",
   "description": "TabNexus for DSH：在 DeepSeek Harness 内同步、查看并整理当前 Chrome 标签。",
   "type": "module",
   "main": "lib/index.js",

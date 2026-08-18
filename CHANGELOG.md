@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.2
+
+- Preserved SPA hash routes so distinct open tabs no longer overwrite each other's category.
+- Made explicit category lists authoritative instead of silently inventing extra categories.
+
+## 0.4.1
+
+- Fixed the desktop/Web panel getting stuck in an invisible persisted-open state after a client reload.
+- Kept the native top-right TabNexus button visible as a reliable open/close toggle.
+- Verified the deployed Chrome extension directory instead of assuming the source checkout was the active extension.
+
 ## 0.4.0
 
 - Rebuilt the product around the current Chrome window instead of a separate task database.

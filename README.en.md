@@ -30,8 +30,8 @@ DSH already is the Agent. The plugin does not register MCP/Agent tools, does not
 Install the TabNexus Chrome extension and enable its local bridge, then:
 
 ```bash
-curl -LO https://github.com/KaichenCurry/TabNexus-DSH/releases/download/v0.4.0/dsh-plugin-tabnexus-0.4.0.tgz
-dsh plugin --profile web add ./dsh-plugin-tabnexus-0.4.0.tgz
+curl -LO https://github.com/KaichenCurry/TabNexus-DSH/releases/download/v0.4.2/dsh-plugin-tabnexus-0.4.2.tgz
+dsh plugin --profile web add ./dsh-plugin-tabnexus-0.4.2.tgz
 ```
 
 Restart DSH and refresh `http://127.0.0.1:3080/`. The desktop shell uses the same Client bundle.

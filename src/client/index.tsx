@@ -54,7 +54,6 @@ interface InputBridge {
 }
 
 const STORAGE_KEY = "tabnexus:dsh:tab-manager:v4";
-const PANEL_KEY = "tabnexus:dsh:panel-open";
 const COLORS = ["#5b7cdd", "#4b9b78", "#9470d4", "#d98255", "#c96382", "#438ea8", "#a8893f"];
 
 function uid(prefix: string): string {
@@ -91,13 +90,15 @@ function updateOrganizer(recipe: (next: OrganizerState) => void): void {
   for (const listener of organizerListeners) listener();
 }
 
-let panelOpen = localStorage.getItem(PANEL_KEY) === "true";
+// Panel visibility is intentionally runtime-only. Persisting it caused a stale
+// "open" flag to hide the entry after a DSH client/plugin reload even though
+// the native details slot had already been disposed.
+let panelOpen = false;
 const panelListeners = new Set<() => void>();
 let nativePanelController: ((open: boolean) => void) | null = null;
 function setPanelOpen(next: boolean): void {
   if (panelOpen === next) return;
   panelOpen = next;
-  localStorage.setItem(PANEL_KEY, String(next));
   nativePanelController?.(next);
   for (const listener of panelListeners) listener();
 }
@@ -114,7 +115,6 @@ let inputBridge: InputBridge | null = null;
 function normalizedUrl(raw: string): string {
   try {
     const url = new URL(raw);
-    url.hash = "";
     for (const key of [...url.searchParams.keys()]) {
       const lower = key.toLocaleLowerCase();
       if (lower.startsWith("utm_") || ["fbclid", "gclid", "dclid", "msclkid", "mc_cid", "mc_eid", "igshid"].includes(lower)) url.searchParams.delete(key);
@@ -124,6 +124,19 @@ function normalizedUrl(raw: string): string {
   } catch {
     return raw;
   }
+}
+
+function explicitCategoryScore(tab: BrowserTab, category: string): number {
+  const direct = scoreCategory(tab, category);
+  const value = `${tab.title} ${tab.url}`.toLocaleLowerCase();
+  const name = category.toLocaleLowerCase();
+  let semantic = 0;
+  if (/投递|申请|进度|记录|跟进/.test(name) && /投递|申请|my.?apply|application|进度|记录/.test(value)) semantic += 20;
+  if (/岗位|职位|招聘|求职|公司/.test(name) && /招聘|求职|职位|岗位|校招|jd\b|career|campus|talent|zhaopin|recruit|position|job/.test(value)) semantic += 16;
+  if (/文档|资料|表格|知识/.test(name) && /飞书|语雀|notion|docs?|wiki|文档|表格|sheet/.test(value)) semantic += 18;
+  if (/本地|工具|开发/.test(name) && /localhost|127\.0\.0\.1|github|gitlab|开发|代码|api/.test(value)) semantic += 18;
+  if (/ai|智能|搜索/.test(name) && /deepseek|chatgpt|claude|gemini|搜索|search|\bai\b|harness/.test(value)) semantic += 14;
+  return direct + semantic;
 }
 
 function domainOf(raw: string): string {
@@ -170,13 +183,13 @@ function createProposal(tabs: BrowserTab[], instruction: string): Proposal {
   const assignments: Record<number, string> = {};
   for (const tab of tabs) {
     if (explicit.length) {
-      const ranked = explicit.map((category) => ({ category, score: scoreCategory(tab, category) })).sort((a, b) => b.score - a.score);
-      assignments[tab.tabId] = ranked[0].score > 0 ? ranked[0].category : smartCategory(tab, instruction);
+      const ranked = explicit.map((category) => ({ category, score: explicitCategoryScore(tab, category) })).sort((a, b) => b.score - a.score);
+      assignments[tab.tabId] = ranked[0]?.category ?? explicit[0];
     } else {
       assignments[tab.tabId] = smartCategory(tab, instruction);
     }
   }
-  return { categories: [...new Set([...explicit, ...Object.values(assignments)])], assignments, instruction };
+  return { categories: explicit.length ? explicit : [...new Set(Object.values(assignments))], assignments, instruction };
 }
 
 async function fetchChromeTabs(): Promise<ChromeSnapshot> {
@@ -381,12 +394,11 @@ function TabNexusOverlay(_props: OverlayProps) {
   useEffect(() => {
     const onStorage = (event: StorageEvent): void => {
       if (event.key === STORAGE_KEY) { organizerState = loadOrganizer(); for (const listener of organizerListeners) listener(); }
-      if (event.key === PANEL_KEY) { panelOpen = event.newValue === "true"; for (const listener of panelListeners) listener(); }
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
-  return <div className="tnx-root"><style>{CSS}</style>{!open && <button className="tnx-entry" data-open={open} title="打开 TabNexus 标签管理器" aria-label="打开 TabNexus 标签管理器" onClick={() => setPanelOpen(true)}>{Icons.tabs}</button>}</div>;
+  return <div className="tnx-root"><style>{CSS}</style><button className="tnx-entry" data-open={open} aria-pressed={open} title={open ? "关闭 TabNexus 标签管理器" : "打开 TabNexus 标签管理器"} aria-label={open ? "关闭 TabNexus 标签管理器" : "打开 TabNexus 标签管理器"} onClick={() => setPanelOpen(!open)}>{Icons.tabs}</button></div>;
 }
 
 export function apply(ctx: ClientContext): void {

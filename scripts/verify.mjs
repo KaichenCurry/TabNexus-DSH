@@ -16,7 +16,7 @@ const clientSource = await readFile(resolve(root, "src/client/index.tsx"), "utf8
 const readme = await readFile(resolve(root, "README.md"), "utf8");
 const architecture = await readFile(resolve(root, "docs/ARCHITECTURE.md"), "utf8");
 
-ok("release version is 0.4.0", pkg.version === "0.4.0");
+ok("release version is 0.4.2", pkg.version === "0.4.2");
 ok("host and client exports exist", pkg.exports["."]?.default === "./lib/index.js" && pkg.exports["./client"]?.default === "./lib/client.js");
 ok("package has no Agent tools dependency", !pkg.peerDependencies?.["@deepseek-ai/dsh-tools"] && !pkg.devDependencies?.["@deepseek-ai/dsh-tools"]);
 ok("package has no MCP client dependency", !JSON.stringify(pkg).includes("dsh-mcp-client"));
@@ -32,11 +32,14 @@ ok("Client uses official overlay slot", client.includes("shell.overlay") && clie
 ok("Client uses DSH composer input bridge", client.includes("conversation.input.left") && client.includes("inputActions"));
 ok("Client mounts the native DSH details column", client.includes('name: "details"') && client.includes("priority: -100") && client.includes("openDetails") && client.includes("closeDetails"));
 ok("Client renders icon entry instead of pill", client.includes("tnx-entry") && !client.includes("tnx-chip"));
+ok("Client keeps a recoverable panel toggle", client.includes("aria-pressed") && !client.includes("tabnexus:dsh:panel-open"));
 ok("Client panel is owned by native layout", client.includes("width:100%") && !client.includes("position:fixed;z-index:72"));
 ok("Client syncs live Chrome tabs", client.includes("/plugins/tabnexus/chrome-tabs") && clientSource.includes("3_000"));
 ok("Client starts with a flat tab view", clientSource.includes('useState<\"flat\" | \"grouped\">(\"flat\")') && client.includes("全部"));
 ok("Client supports one-click organization", client.includes("一键整理") && client.includes("让 DSH 帮你梳理") && client.includes("整理预览"));
 ok("Client supports freeform classification", client.includes("按公司和求职阶段分类") && client.includes("classification") === false);
+ok("Client preserves SPA hash routes", !clientSource.includes('url.hash = ""'));
+ok("Explicit category lists stay authoritative", clientSource.includes("explicitCategoryScore") && clientSource.includes("explicit.length ? explicit"));
 ok("Client supports manual categories", client.includes("新建分类") && client.includes("未分类") && client.includes("tnx-assignment"));
 ok("Client focuses existing Chrome tabs", client.includes("/plugins/tabnexus/chrome-action") && client.includes("focusChromeTab"));
 ok("Client has no flow view", !client.includes("流程") && !client.includes("tnx-flow"));

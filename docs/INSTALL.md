@@ -5,8 +5,8 @@
 需要 DeepSeek Harness `0.1.0-rc.6` 或兼容预览版。
 
 ```bash
-curl -LO https://github.com/KaichenCurry/TabNexus-DSH/releases/download/v0.4.0/dsh-plugin-tabnexus-0.4.0.tgz
-dsh plugin --profile web add ./dsh-plugin-tabnexus-0.4.0.tgz
+curl -LO https://github.com/KaichenCurry/TabNexus-DSH/releases/download/v0.4.2/dsh-plugin-tabnexus-0.4.2.tgz
+dsh plugin --profile web add ./dsh-plugin-tabnexus-0.4.2.tgz
 ```
 
 同时安装 TabNexus Chrome 扩展，并在扩展设置中启用“本地 Agent 桥”。重启 DSH Web 服务并刷新页面；右上角出现 Tab 图标即安装成功。插件不需要 MCP 配置或 API Key。
@@ -19,7 +19,7 @@ cd TabNexus-DSH
 npm install --legacy-peer-deps
 npm test
 npm pack
-dsh plugin --profile web add ./dsh-plugin-tabnexus-0.4.0.tgz
+dsh plugin --profile web add ./dsh-plugin-tabnexus-0.4.2.tgz
 ```
 
 ## 升级
@@ -28,7 +28,7 @@ dsh plugin --profile web add ./dsh-plugin-tabnexus-0.4.0.tgz
 
 ```bash
 dsh plugin --profile web remove dsh-plugin-tabnexus
-dsh plugin --profile web add ./dsh-plugin-tabnexus-0.4.0.tgz
+dsh plugin --profile web add ./dsh-plugin-tabnexus-0.4.2.tgz
 ```
 
 ## 数据位置

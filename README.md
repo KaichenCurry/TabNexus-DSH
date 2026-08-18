@@ -10,7 +10,7 @@ TabNexus-DSH v0.4 不再是一套与浏览器分离的任务面板。它把 Chro
 
 ![TabNexus-DSH v0.4 原生右侧标签栏](docs/tabnexus-dsh-v0.4.png)
 
-## v0.4.0
+## v0.4.2
 
 - DSH 右上角只显示一个轻量 Tab 图标，不再使用悬浮状态胶囊。
 - 点击后占用 DSH 原生右侧详情列，与默认左侧栏接近；中间会话会自然收缩，无背景遮罩和内容覆盖。
@@ -38,8 +38,8 @@ Host 只提供一个同源、本机 UI 代理，把现有 TabNexus Chrome 扩展
 Chrome 端需要安装 TabNexus 扩展，并在扩展设置中启用“本地 Agent 桥”。随后安装 DSH 插件：
 
 ```bash
-curl -LO https://github.com/KaichenCurry/TabNexus-DSH/releases/download/v0.4.0/dsh-plugin-tabnexus-0.4.0.tgz
-dsh plugin --profile web add ./dsh-plugin-tabnexus-0.4.0.tgz
+curl -LO https://github.com/KaichenCurry/TabNexus-DSH/releases/download/v0.4.2/dsh-plugin-tabnexus-0.4.2.tgz
+dsh plugin --profile web add ./dsh-plugin-tabnexus-0.4.2.tgz
 ```
 
 重启 DSH Web 服务并刷新 `http://127.0.0.1:3080/`。桌面端加载同一套 DSH Client，无需单独实现。
