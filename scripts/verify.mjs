@@ -15,8 +15,10 @@ const client = await readFile(resolve(root, "lib/client.js"), "utf8");
 const clientSource = await readFile(resolve(root, "src/client/index.tsx"), "utf8");
 const readme = await readFile(resolve(root, "README.md"), "utf8");
 const architecture = await readFile(resolve(root, "docs/ARCHITECTURE.md"), "utf8");
+const relay = await readFile(resolve(root, "bridge/tabnexus-relay.mjs"), "utf8");
+const installer = await readFile(resolve(root, "installer/安装 TabNexus.command"), "utf8");
 
-ok("release version is 0.4.2", pkg.version === "0.4.2");
+ok("release version is 0.4.3", pkg.version === "0.4.3");
 ok("host and client exports exist", pkg.exports["."]?.default === "./lib/index.js" && pkg.exports["./client"]?.default === "./lib/client.js");
 ok("package has no Agent tools dependency", !pkg.peerDependencies?.["@deepseek-ai/dsh-tools"] && !pkg.devDependencies?.["@deepseek-ai/dsh-tools"]);
 ok("package has no MCP client dependency", !JSON.stringify(pkg).includes("dsh-mcp-client"));
@@ -27,6 +29,8 @@ ok("Host does not register DSH Agent tools", !host.includes("defineTool") && !ho
 ok("Host exposes Chrome snapshot route", host.includes("/plugins/tabnexus/chrome-tabs") && host.includes("read_tab_workbench"));
 ok("Host exposes only safe focus action", host.includes("/plugins/tabnexus/chrome-action") && host.includes("focus_tab") && !host.includes("close_browser_tabs"));
 ok("Host limits bridge to loopback", host.includes("Chrome 桥只允许使用本机地址"));
+ok("Host auto-starts the bundled Chrome relay", host.includes("startBundledRelay") && host.includes("43120") && pkg.files.includes("bridge"));
+ok("Bundled relay is UI-only", relay.includes('mode: "ui-only"') && relay.includes("/tabnexus-dsh") && relay.includes("ALLOWED_TOOLS") && !relay.includes("tools/list"));
 
 ok("Client uses official overlay slot", client.includes("shell.overlay") && client.includes("tabnexus:overlay"));
 ok("Client uses DSH composer input bridge", client.includes("conversation.input.left") && client.includes("inputActions"));
@@ -36,7 +40,7 @@ ok("Client keeps a recoverable panel toggle", client.includes("aria-pressed") &&
 ok("Client panel is owned by native layout", client.includes("width:100%") && !client.includes("position:fixed;z-index:72"));
 ok("Client syncs live Chrome tabs", client.includes("/plugins/tabnexus/chrome-tabs") && clientSource.includes("3_000"));
 ok("Client starts with a flat tab view", clientSource.includes('useState<\"flat\" | \"grouped\">(\"flat\")') && client.includes("全部"));
-ok("Client supports one-click organization", client.includes("一键整理") && client.includes("让 DSH 帮你梳理") && client.includes("整理预览"));
+ok("Client supports one-click organization", client.includes("让 DSH 帮你梳理") && client.includes("整理预览") && client.includes("开始整理"));
 ok("Client supports freeform classification", client.includes("按公司和求职阶段分类") && client.includes("classification") === false);
 ok("Client preserves SPA hash routes", !clientSource.includes('url.hash = ""'));
 ok("Explicit category lists stay authoritative", clientSource.includes("explicitCategoryScore") && clientSource.includes("explicit.length ? explicit"));
@@ -45,6 +49,8 @@ ok("Client focuses existing Chrome tabs", client.includes("/plugins/tabnexus/chr
 ok("Client has no flow view", !client.includes("流程") && !client.includes("tnx-flow"));
 ok("Client preserves reduced motion", client.includes("prefers-reduced-motion"));
 ok("Client avoids DOM guessing", !client.includes("MutationObserver") && !client.includes("querySelector"));
+ok("Client avoids a select on every row", clientSource.includes("editingCategory") && client.includes("tnx-category-label"));
+ok("One-click installer installs and verifies web profile", installer.includes("plugin --profile web add") && installer.includes("/plugins/tabnexus/chrome-tabs") && installer.includes("open \"http://127.0.0.1:3080/\""));
 
 const calls = [];
 const broker = createServer(async (request, response) => {

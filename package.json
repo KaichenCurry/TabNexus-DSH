@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-tabnexus",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "TabNexus for DSH：在 DeepSeek Harness 内同步、查看并整理当前 Chrome 标签。",
   "type": "module",
   "main": "lib/index.js",
@@ -11,7 +11,7 @@
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
-  "files": ["lib", "cordis.patch.yml", "README.md", "README.en.md", "CHANGELOG.md", "LICENSE", "docs"],
+  "files": ["lib", "bridge", "cordis.patch.yml", "README.md", "README.en.md", "CHANGELOG.md", "LICENSE", "docs"],
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },
     "client": { "inject": ["@deepseek-ai/dsh-client-runtime", "@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-client-ui-layout"], "platform": "web" }

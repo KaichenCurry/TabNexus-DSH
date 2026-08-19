@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { spawn, type ChildProcess } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Context } from "@deepseek-ai/cordis";
 import z from "@deepseek-ai/schemastery";
@@ -13,7 +16,7 @@ export interface Config {
 
 export const Config: z<Config> = z.object({
   bridgeHost: z.string().default("127.0.0.1"),
-  bridgePort: z.number().default(43119)
+  bridgePort: z.number().default(43120)
 });
 
 interface RouteHost {
@@ -69,16 +72,16 @@ async function brokerCall(baseUrl: string, tool: string, args: Record<string, un
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8_000);
   try {
-    const response = await fetch(`${baseUrl}/agent/call`, {
+    const response = await fetch(`${baseUrl}/ui/call`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-tabnexus-broker": "0.4"
+        "x-tabnexus-dsh": "0.4"
       },
       body: JSON.stringify({
         agentId: "tabnexus-dsh-ui",
         agentName: "TabNexus DSH UI",
-        agentVersion: "0.4.2",
+        agentVersion: "0.4.3",
         toolCount: 0,
         tool,
         args
@@ -95,9 +98,34 @@ async function brokerCall(baseUrl: string, tool: string, args: Record<string, un
   }
 }
 
+async function relayExists(baseUrl: string): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 700);
+  try {
+    const response = await fetch(`${baseUrl}/health`, { signal: controller.signal, cache: "no-store" });
+    return response.status === 200 || response.status === 503;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function startBundledRelay(baseUrl: string, port: number): Promise<ChildProcess | null> {
+  if (await relayExists(baseUrl)) return null;
+  const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const relayPath = resolve(packageRoot, "bridge", "tabnexus-relay.mjs");
+  const child = spawn(process.execPath, [relayPath], {
+    env: { ...process.env, TABNEXUS_BRIDGE_PORT: String(port) },
+    stdio: "ignore"
+  });
+  child.unref();
+  return child;
+}
+
 function safeBridgeBase(config: Config): string {
   const host = config.bridgeHost?.trim() || "127.0.0.1";
-  const port = Number(config.bridgePort ?? 43119);
+  const port = Number(config.bridgePort ?? 43120);
   if (host !== "127.0.0.1" && host !== "localhost") throw new Error("Chrome 桥只允许使用本机地址");
   if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("Chrome 桥端口无效");
   return `http://${host}:${port}`;
@@ -110,6 +138,21 @@ function safeBridgeBase(config: Config): string {
 export function apply(ctx: Context, config: Config): void {
   const host = (ctx as Context & { webServer: RouteHost }).webServer;
   const bridgeBase = safeBridgeBase(config);
+  const bridgePort = Number(config.bridgePort ?? 43120);
+  let relayProcess: ChildProcess | null = null;
+  let disposed = false;
+
+  void startBundledRelay(bridgeBase, bridgePort).then((child) => {
+    if (!child) return;
+    if (disposed) child.kill();
+    else relayProcess = child;
+  });
+
+  ctx.effect(() => () => {
+    disposed = true;
+    if (relayProcess && !relayProcess.killed) relayProcess.kill();
+    relayProcess = null;
+  }, "tabnexus: bundled Chrome relay");
 
   ctx.effect(() => host.register({
     kind: "exact",

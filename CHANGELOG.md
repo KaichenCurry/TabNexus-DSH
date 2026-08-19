@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.3
+
+- Added a macOS double-click installer that installs, restarts, checks, and opens DSH in one pass.
+- Bundled and auto-started a UI-only local Chrome relay, so no separate bridge command is required.
+- Restyled the native details panel to match DSH spacing, hierarchy, controls, and list density.
+- Replaced the large blue organize button with a quiet DSH toolbar action.
+- Replaced always-visible per-row selects with on-demand category editing.
+
 ## 0.4.2
 
 - Preserved SPA hash routes so distinct open tabs no longer overwrite each other's category.

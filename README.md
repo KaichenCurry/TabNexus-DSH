@@ -10,10 +10,11 @@ TabNexus-DSH v0.4 不再是一套与浏览器分离的任务面板。它把 Chro
 
 ![TabNexus-DSH v0.4 原生右侧标签栏](docs/tabnexus-dsh-v0.4.png)
 
-## v0.4.2
+## v0.4.3
 
 - DSH 右上角只显示一个轻量 Tab 图标，不再使用悬浮状态胶囊。
 - 点击后占用 DSH 原生右侧详情列，与默认左侧栏接近；中间会话会自然收缩，无背景遮罩和内容覆盖。
+- 标题栏、搜索、视图切换、列表行和按钮全部改用 DSH 原生层级；移除大面积蓝色按钮和每行常驻下拉框。
 - 面板打开后立即同步 Chrome 当前窗口，并在打开期间自动刷新。
 - 默认平铺所有标签，显示 favicon、标题、域名、固定状态与当前标签。
 - 双击或点击标题可切回对应的 Chrome 标签。
@@ -31,18 +32,26 @@ DeepSeek Harness 本身就是 Agent，因此插件：
 - 不需要 API Key；
 - 不保存或复制一份 Chrome 标签数据库。
 
-Host 只提供一个同源、本机 UI 代理，把现有 TabNexus Chrome 扩展的本地桥数据交给右侧栏。分类偏好保存在 DSH Web Client 的 `localStorage`；真实标签始终以 Chrome 当前窗口为准。
+Host 只提供同源 UI 代理，并自动启动包内的本机 Chrome relay；这个 relay 只允许“读取标签”和“聚焦标签”，不向 DSH 注册 Agent 工具。分类偏好保存在 DSH Web Client 的 `localStorage`；真实标签始终以 Chrome 当前窗口为准。
 
-## 安装
+## 一键安装
 
-Chrome 端需要安装 TabNexus 扩展，并在扩展设置中启用“本地 Agent 桥”。随后安装 DSH 插件：
+下载 Release 中的 `TabNexus-DSH-v0.4.3-macOS.zip`，解压后双击：
 
-```bash
-curl -LO https://github.com/KaichenCurry/TabNexus-DSH/releases/download/v0.4.2/dsh-plugin-tabnexus-0.4.2.tgz
-dsh plugin --profile web add ./dsh-plugin-tabnexus-0.4.2.tgz
+```text
+安装 TabNexus.command
 ```
 
-重启 DSH Web 服务并刷新 `http://127.0.0.1:3080/`。桌面端加载同一套 DSH Client，无需单独实现。
+安装器会自动完成插件安装、DSH Web 重启、路由自检，并同时打开 Web 端与已安装的桌面外壳。Web 与桌面端使用同一个 `127.0.0.1:3080` 服务，所以入口、功能和分类数据一致。
+
+也可以使用命令行安装：
+
+```bash
+curl -LO https://github.com/KaichenCurry/TabNexus-DSH/releases/download/v0.4.3/dsh-plugin-tabnexus-0.4.3.tgz
+dsh plugin --profile web add ./dsh-plugin-tabnexus-0.4.3.tgz
+```
+
+Chrome 端仍需安装 TabNexus 扩展 `1.0.5+`。无需 API Key、无需 MCP 配置，也不需要另外启动桥接命令；DSH 专用同步不受旧“Agent 桥”开关影响。
 
 ## 使用
 

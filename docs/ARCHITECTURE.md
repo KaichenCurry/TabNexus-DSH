@@ -4,7 +4,7 @@
 
 ```text
 Chrome 当前窗口
-    │ local loopback bridge (127.0.0.1:43119)
+    │ bundled UI-only relay (127.0.0.1:43120)
     ▼
 DSH Host UI proxy
     │ same-origin /plugins/tabnexus/chrome-*
@@ -21,7 +21,7 @@ TabNexus-DSH 不复制 Chrome 标签，也不维护第二份网页数据库。�
 - `GET /plugins/tabnexus/chrome-tabs`：读取当前 Tab workbench；
 - `POST /plugins/tabnexus/chrome-action`：只允许 `focus`，把已有 Chrome 标签切到前台。
 
-Host 不注册 Agent 工具，不启动 MCP Server，不调用模型，不保存状态。代理只接受 loopback Chrome 桥，写操作采用最新 workbench revision；关闭、删除等破坏性动作没有公开入口。
+Host 不注册 Agent 工具，不启动 MCP Server，不调用模型，不保存状态。Host 会在没有既存桥时自动启动包内的 UI-only relay；它只接受 loopback Chrome 扩展连接，且只放行读取 workbench 和聚焦标签。写操作采用最新 revision；关闭、删除等破坏性动作没有公开入口。
 
 ## Client
 
