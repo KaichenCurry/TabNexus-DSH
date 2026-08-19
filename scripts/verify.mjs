@@ -1,6 +1,8 @@
 #!/usr/bin/env node
+import { createServer } from "node:http";
 import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { apply } from "../lib/index.js";
 
 const root = resolve(import.meta.dirname, "..");
 const checks = [];
@@ -10,42 +12,102 @@ const missing = async (path) => { try { await access(resolve(root, path)); retur
 const pkg = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
 const host = await readFile(resolve(root, "lib/index.js"), "utf8");
 const client = await readFile(resolve(root, "lib/client.js"), "utf8");
+const clientSource = await readFile(resolve(root, "src/client/index.tsx"), "utf8");
 const readme = await readFile(resolve(root, "README.md"), "utf8");
 const architecture = await readFile(resolve(root, "docs/ARCHITECTURE.md"), "utf8");
+const relay = await readFile(resolve(root, "bridge/tabnexus-relay.mjs"), "utf8");
+const installer = await readFile(resolve(root, "installer/安装 TabNexus.command"), "utf8");
+const launchAgent = await readFile(resolve(root, "installer/com.tabnexus.dsh-web.plist.template"), "utf8");
 
-ok("release version is 0.3.0", pkg.version === "0.3.0");
+ok("release version is 0.4.4", pkg.version === "0.4.4");
 ok("host and client exports exist", pkg.exports["."]?.default === "./lib/index.js" && pkg.exports["./client"]?.default === "./lib/client.js");
 ok("package has no Agent tools dependency", !pkg.peerDependencies?.["@deepseek-ai/dsh-tools"] && !pkg.devDependencies?.["@deepseek-ai/dsh-tools"]);
-ok("package has no MCP dependency", !JSON.stringify(pkg).includes("dsh-mcp-client"));
-ok("package has no optional sidebar dependency", !JSON.stringify(pkg).includes("better-sidebar"));
-ok("Skill and preset are not shipped", !pkg.files.includes("skills") && !pkg.files.includes("preset"));
+ok("package has no MCP client dependency", !JSON.stringify(pkg).includes("dsh-mcp-client"));
+ok("stale standalone storage output is absent", await missing("lib/core.js") && await missing("lib/routes.js"));
 
-ok("Host is intentionally client-only", host.includes("client-only") && /inject\s*=\s*\[\]/.test(host));
-ok("Host registers no tools", !host.includes("defineTool") && !host.includes("ctx.tools") && !host.includes("mcp__tabnexus__"));
-ok("Host registers no web routes", !host.includes("webServer") && !host.includes("registerPublicRoutes") && !host.includes("/plugins/tabnexus"));
-ok("stale core output is absent", await missing("lib/core.js") && await missing("lib/types/core.d.ts"));
-ok("stale route output is absent", await missing("lib/routes.js") && await missing("lib/types/routes.d.ts"));
+ok("Host uses only webServer", /inject\s*=\s*\[\"webServer\"\]/.test(host));
+ok("Host does not register DSH Agent tools", !host.includes("defineTool") && !host.includes("ctx.tools"));
+ok("Host exposes Chrome snapshot route", host.includes("/plugins/tabnexus/chrome-tabs") && host.includes("read_tab_workbench"));
+ok("Host exposes only safe focus action", host.includes("/plugins/tabnexus/chrome-action") && host.includes("focus_tab") && !host.includes("close_browser_tabs"));
+ok("Host limits bridge to loopback", host.includes("Chrome 桥只允许使用本机地址"));
+ok("Host auto-starts the bundled Chrome relay", host.includes("startBundledRelay") && host.includes("43120") && pkg.files.includes("bridge"));
+ok("Bundled relay is UI-only", relay.includes('mode: "ui-only"') && relay.includes("/tabnexus-dsh") && relay.includes("ALLOWED_TOOLS") && !relay.includes("tools/list"));
 
-ok("Client uses official shell.overlay slot", client.includes("shell.overlay") && client.includes("tabnexus:entry"));
-ok("Client stores state locally", client.includes("tabnexus:dsh:workspace:v3") && client.includes("localStorage"));
-ok("Client makes no network request", !client.includes("fetch(") && !client.includes("EventSource") && !client.includes("WebSocket"));
-ok("Client has no Agent bridge", !client.includes("mcp__tabnexus__") && !client.includes("sessionBindings"));
-ok("Client has no DOM position guessing", !client.includes("MutationObserver") && !client.includes("querySelector"));
-ok("Client supports tasks", client.includes("新建任务") && client.includes("任务设置") && client.includes("当前任务"));
-ok("Client supports categories", client.includes("新建分类") && client.includes("移动分类") && client.includes("删除分类"));
-ok("Client supports three simple statuses", ["待处理", "进行中", "已完成"].every((label) => client.includes(label)));
-ok("Client supports category and flow views", client.includes("分类") && client.includes("流程") && client.includes("tnx-flow-guide"));
-ok("Client supports page notes and deletion", client.includes("编辑标题与备注") && client.includes("删除网页"));
-ok("Client validates HTTP(S) pages", client.includes('value.protocol !== "http:"') && client.includes('value.protocol !== "https:"'));
-ok("Client strips tracking params", client.includes('startsWith("utm_")') && client.includes("fbclid") && client.includes("searchParams.sort"));
-ok("Client avoids normalized duplicates", client.includes("这个网页已经在当前任务中"));
-ok("Client includes glass and responsive styling", client.includes("backdrop-filter") && client.includes("@media(max-width:640px)"));
-ok("Client respects reduced motion", client.includes("prefers-reduced-motion"));
-ok("Client has Dock and expanded workspace", client.includes('mode: "dock"') && client.includes('mode: "expanded"'));
+ok("Client uses official overlay slot", client.includes("shell.overlay") && client.includes("tabnexus:overlay"));
+ok("Client does not inject prompts or Agent tools", !client.includes("conversation.input.left") && !client.includes("inputActions") && !clientSource.includes("sendOrganizerPrompt"));
+ok("Client mounts the native DSH details column", client.includes('name: "details"') && client.includes("priority: -100") && client.includes("openDetails") && client.includes("closeDetails"));
+ok("Client renders icon entry instead of pill", client.includes("tnx-entry") && !client.includes("tnx-chip"));
+ok("Client keeps a recoverable panel toggle", client.includes("aria-pressed") && !client.includes("tabnexus:dsh:panel-open"));
+ok("Client panel is owned by native layout", client.includes("width:100%") && !client.includes("position:fixed;z-index:72"));
+ok("Client syncs live Chrome tabs without overlapping requests", client.includes("/plugins/tabnexus/chrome-tabs") && clientSource.includes("900") && clientSource.includes("refreshingRef"));
+ok("Client starts with a flat tab view", clientSource.includes('useState<\"flat\" | \"grouped\">(\"flat\")') && client.includes("全部"));
+ok("Client supports one-click organization", client.includes("一键整理标签") && client.includes("整理预览") && client.includes("开始整理"));
+ok("Client supports freeform classification", client.includes("按公司和求职阶段分类") && client.includes("classification") === false);
+ok("Client preserves SPA hash routes", !clientSource.includes('url.hash = ""'));
+ok("Explicit category lists stay authoritative", clientSource.includes("explicitCategoryScore") && clientSource.includes("explicit.length ? explicit"));
+ok("Client supports manual categories", client.includes("新建分类") && client.includes("未分类") && client.includes("tnx-assignment"));
+ok("Client focuses existing Chrome tabs", client.includes("/plugins/tabnexus/chrome-action") && client.includes("focusChromeTab"));
+ok("Client has no flow view", !client.includes("流程") && !client.includes("tnx-flow"));
+ok("Client preserves reduced motion", client.includes("prefers-reduced-motion"));
+ok("Client avoids DOM guessing", !client.includes("MutationObserver") && !client.includes("querySelector"));
+ok("Client avoids a select on every row", clientSource.includes("editingCategory") && client.includes("tnx-category-label"));
+ok("Client renders clear colored category tags", client.includes("tnx-category-dot") && client.includes("--tnx-category-color"));
+ok("One-click installer installs and verifies web profile", installer.includes("plugin --profile web add") && installer.includes("/plugins/tabnexus/chrome-tabs") && installer.includes("open \"http://127.0.0.1:3080/\""));
+ok("One-click installer keeps DSH Web and desktop service alive", installer.includes("launchctl bootstrap") && installer.includes("com.tabnexus.dsh-web") && launchAgent.includes("<key>KeepAlive</key>"));
+ok("One-click installer refreshes an unpacked Chrome background once", installer.includes("workspace.html?dsh=connect"));
 
-ok("README explicitly rejects duplicate Agent layer", readme.includes("不注册 Agent 工具") && readme.includes("不提供 MCP") && readme.includes("不开放 Host API"));
-ok("Architecture documents local-only state", architecture.includes("localStorage") && architecture.includes("没有网络请求、SSE 或 Host API"));
-ok("README keeps simple product chain", readme.includes("任务管理 → 分类整理 → 网页状态 → 简单流程"));
+const calls = [];
+const broker = createServer(async (request, response) => {
+  let raw = "";
+  for await (const chunk of request) raw += chunk;
+  const body = JSON.parse(raw || "{}");
+  calls.push(body);
+  response.writeHead(200, { "content-type": "application/json" });
+  response.end(JSON.stringify({ ok: true, data: body.tool === "read_tab_workbench" ? {
+    tool: "read_tab_workbench",
+    revision: "railr_test",
+    unchanged: false,
+    workbench: { openTabs: [{ tabId: 7, windowId: 1, title: "Test", url: "https://example.com", pinned: false, active: true }], counts: { unsupported: 0 } }
+  } : { tool: "manage_tab_workbench", revision: "railr_next" } }));
+});
+await new Promise((resolveListen) => broker.listen(0, "127.0.0.1", resolveListen));
+const brokerPort = broker.address().port;
+const routes = new Map();
+const disposers = [];
+const mockCtx = {
+  webServer: { register: (route) => { routes.set(route.path, route.handler); return () => routes.delete(route.path); } },
+  effect: (effect) => { const dispose = effect(); if (typeof dispose === "function") disposers.push(dispose); }
+};
+apply(mockCtx, { bridgeHost: "127.0.0.1", bridgePort: brokerPort });
+const proxy = createServer((request, response) => routes.get(new URL(request.url, "http://local").pathname)?.(request, response));
+await new Promise((resolveListen) => proxy.listen(0, "127.0.0.1", resolveListen));
+const proxyPort = proxy.address().port;
+
+const snapshotResponse = await fetch(`http://127.0.0.1:${proxyPort}/plugins/tabnexus/chrome-tabs`);
+const snapshot = await snapshotResponse.json();
+ok("Chrome route proxies a real workbench snapshot", snapshotResponse.status === 200 && snapshot.ok === true && snapshot.data.workbench.openTabs[0].tabId === 7);
+
+const focusResponse = await fetch(`http://127.0.0.1:${proxyPort}/plugins/tabnexus/chrome-action`, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ action: "focus", tabId: 7, revision: "railr_test" })
+});
+const focus = await focusResponse.json();
+ok("focus route forwards revision-safe action", focusResponse.status === 200 && focus.ok === true && calls.at(-1)?.tool === "manage_tab_workbench" && calls.at(-1)?.args?.actions?.[0]?.type === "focus_tab");
+
+const invalidResponse = await fetch(`http://127.0.0.1:${proxyPort}/plugins/tabnexus/chrome-action`, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ action: "close", tabId: 7, revision: "railr_test" })
+});
+ok("unsafe actions fail closed", invalidResponse.status === 400);
+
+for (const dispose of disposers) dispose();
+await new Promise((resolveClose) => proxy.close(resolveClose));
+await new Promise((resolveClose) => broker.close(resolveClose));
+
+ok("README names Chrome-first behavior", readme.includes("当前 Chrome 标签") && readme.includes("一键整理") && readme.includes("不需要 API Key"));
+ok("Architecture documents one source of truth", architecture.includes("Chrome 当前窗口") && architecture.includes("不复制 Chrome 标签"));
 
 const failed = checks.filter((check) => !check.pass);
 for (const check of checks) console.log(`${check.pass ? "PASS" : "FAIL"}  ${check.name}`);

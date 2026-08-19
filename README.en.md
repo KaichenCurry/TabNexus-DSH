@@ -1,37 +1,52 @@
 # TabNexus for DSH
 
-TabNexus-DSH is a small, client-only task and webpage organizer for DeepSeek Harness.
+> Manage the current Chrome window without leaving DeepSeek Harness.
 
-**Tasks → categories → webpage status → simple flow**
+[中文](README.md) · [Install](docs/INSTALL.md) · [Compatibility](docs/COMPATIBILITY.md) · [Architecture](docs/ARCHITECTURE.md)
 
-DeepSeek Harness is already the Agent, so this plugin intentionally registers no Agent tools, MCP server, Host API, or model integration. It works immediately from the top-right `TabNexus` capsule.
+TabNexus-DSH v0.4 is a Chrome-first tab manager embedded in DSH:
 
-![TabNexus-DSH v0.3 flow view](docs/tabnexus-dsh-v0.3.png)
+**sync on open → flat live tab list → one-click organization → editable preview → confirm**
 
-## v0.3.0
+![TabNexus-DSH v0.4 native right sidebar](docs/tabnexus-dsh-v0.4.png)
 
-- Create, switch, rename, and delete tasks; add a task goal.
-- Organize webpages into categories and move them at any time.
-- Keep a title, URL, note, and Todo / In progress / Done status for every page.
-- Switch between a category view and a compact three-stage flow view.
-- Official DSH `shell.overlay` integration with a glass Dock, expanded workspace, and narrow-screen drawer.
-- Browser-local persistence; no cloud upload and no API key.
-- Only `http://` and `https://` URLs are accepted. Tracking parameters are removed before duplicate checks.
+## Highlights
+
+- A small TabNexus icon in the DSH top-right area replaces the old floating pill.
+- The native DSH details column keeps the sidebar close to the default left width and resizes the conversation instead of covering it.
+- Controls, spacing, search, and list rows now follow DSH's own visual hierarchy; category selects only appear when requested.
+- The panel reads the current Chrome window immediately and refreshes while open.
+- Tabs show favicon, title, domain, pinned and active states; clicking focuses the existing Chrome tab.
+- One-click organization accepts free-form instructions and creates an editable preview before applying.
+- Categories are displayed as clear colored tags and can be edited in place.
+- Organization stays inside the plugin and never injects a prompt or invokes non-existent Agent tools.
+- A guarded 0.9-second refresh loop keeps Chrome changes responsive without overlapping requests.
+- Manual categories, search, and flat/grouped views remain available.
+- The flow view has been removed.
+
+## No duplicate Agent stack
+
+DSH already is the Agent. The plugin does not register MCP/Agent tools, does not call a separate model API, and needs no API key. Its Host code starts a bundled, UI-only loopback relay and proxies it to the same-origin panel. Chrome remains the source of truth; only category preferences are stored in Client `localStorage`.
 
 ## Install
 
+Download `TabNexus-DSH-v0.4.4-macOS.zip`, extract it, and double-click `安装 TabNexus.command`. It installs the plugin, configures a recoverable login service for DSH, verifies the route, opens both the Web app and the desktop shell, and refreshes a stale unpacked Chrome background once when needed.
+
+Command-line installation remains available:
+
 ```bash
-curl -LO https://github.com/KaichenCurry/TabNexus-DSH/releases/download/v0.3.0/dsh-plugin-tabnexus-0.3.0.tgz
-dsh plugin --profile web add ./dsh-plugin-tabnexus-0.3.0.tgz
+curl -LO https://github.com/KaichenCurry/TabNexus-DSH/releases/download/v0.4.4/dsh-plugin-tabnexus-0.4.4.tgz
+dsh plugin --profile web add ./dsh-plugin-tabnexus-0.4.4.tgz
 ```
 
-Restart DSH and refresh `http://127.0.0.1:3080/`. The desktop shell uses the same Web Client.
+The TabNexus Chrome extension `1.0.6+` is required. No API key, MCP configuration, or separate bridge command is required, and DSH sync is independent from the old Agent-bridge toggle. The desktop shell and Web app use the same Client bundle and `127.0.0.1:3080` service.
 
-## Boundaries
+## Safety
 
-- No Agent tools, MCP, Host routes, or SSE.
-- No live Chrome-tab reading or bulk closing.
-- No local files, cloud sync, or Chrome-extension sync.
+- v0.4 can read and focus tabs, but cannot bulk-close them.
+- Tab titles and URLs are not webpage contents.
+- The Chrome bridge is restricted to loopback.
+- Organization never silently overwrites categories.
 
 ## License
 

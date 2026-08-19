@@ -1,12 +1,14 @@
 import type { Context } from "@deepseek-ai/cordis";
 import z from "@deepseek-ai/schemastery";
-/**
- * TabNexus-DSH is intentionally client-only. DeepSeek Harness already owns the
- * Agent runtime; this plugin only contributes a local task-management surface.
- */
 export declare const name = "tabnexus";
 export declare const inject: string[];
 export interface Config {
+    bridgeHost?: string;
+    bridgePort?: number;
 }
 export declare const Config: z<Config>;
-export declare function apply(_ctx: Context, _config: Config): void;
+/**
+ * The Host only proxies the existing local Chrome bridge to the DSH panel.
+ * It does not register Agent tools, MCP servers, model APIs, or persistence.
+ */
+export declare function apply(ctx: Context, config: Config): void;

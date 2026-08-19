@@ -1,0 +1,15 @@
+TabNexus for DeepSeek Harness v0.4.4
+
+安装：
+1. 保持本文件夹完整，不要单独移动安装脚本。
+2. 双击“安装 TabNexus.command”。
+3. 安装器会自动安装插件、配置 DSH 登录常驻服务、打开 Web 页面、刷新一次旧版解压扩展后台并检查连接。
+4. 点击 DSH 右上角的 TabNexus 图标即可打开右侧标签栏。
+
+使用前提：
+- 已安装 DeepSeek Harness rc.6 或兼容版本。
+- 已在 Chrome 中安装 TabNexus 浏览器扩展。
+- 无需 API Key，无需 MCP 配置。
+- DSH 使用独立的 127.0.0.1:43120 同步通道，不受旧 Agent 桥开关影响。
+
+Web 与桌面端使用同一个 127.0.0.1:3080 服务，因此功能和数据一致。
