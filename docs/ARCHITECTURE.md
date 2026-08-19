@@ -12,7 +12,7 @@ DSH Host UI proxy
 TabNexus 右侧栏
 ```
 
-TabNexus-DSH 不复制 Chrome 标签，也不维护第二份网页数据库。面板每次打开立即读取 Chrome 当前窗口，并在打开期间每 3 秒刷新。标题、URL、favicon、固定状态和当前状态都来自 Chrome。
+TabNexus-DSH 不复制 Chrome 标签，也不维护第二份网页数据库。面板每次打开立即读取 Chrome 当前窗口，并在可见期间用防重入的 0.9 秒轻量刷新保持同步。标题、URL、favicon、固定状态和当前状态都来自 Chrome。
 
 ## Host
 
@@ -25,10 +25,9 @@ Host 不注册 Agent 工具，不启动 MCP Server，不调用模型，不保存
 
 ## Client
 
-`src/client/index.tsx` 使用两个 DSH 官方 Slot：
+`src/client/index.tsx` 使用 DSH 官方 Slot 与布局能力：
 
 - `shell.overlay`：只渲染全局右上角图标；
-- `conversation.input.left`：只共享当前 DSH 会话的 composer actions，用于用户明确点击“一键整理”时把复核请求交给 DSH；隐藏占位不占布局，因此空白“新会话”也可使用。
 - `details`：打开时动态占用 DSH 原生右侧详情列，关闭后立即释放并恢复 DSH 自带详情面板。中间会话列由官方三栏布局自动收缩，不会被侧栏遮住。
 
 界面默认是当前标签的平铺列表。分类只是一层本地视图偏好：
@@ -39,7 +38,7 @@ localStorage tabnexus:dsh:tab-manager:v4
 └── assignments: normalized URL → category id
 ```
 
-一键整理先根据标题、域名和 URL 生成可编辑预览，同时在当前 DSH 输入框为空时提交复核提示。用户确认后才写入分类偏好。插件不会声称读过网页正文，也不会静默改变 Chrome 标签。
+一键整理根据标题、域名和 URL 在插件内生成可编辑预览，用户确认后才写入分类偏好。插件不会注入 DSH 对话、调用 Agent 工具、声称读过网页正文或静默改变 Chrome 标签。
 
 ## Desktop and Web
 

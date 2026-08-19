@@ -81,7 +81,7 @@ async function brokerCall(baseUrl: string, tool: string, args: Record<string, un
       body: JSON.stringify({
         agentId: "tabnexus-dsh-ui",
         agentName: "TabNexus DSH UI",
-        agentVersion: "0.4.3",
+        agentVersion: "0.4.4",
         toolCount: 0,
         tool,
         args

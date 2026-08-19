@@ -5,7 +5,7 @@ import { createServer } from "node:http";
 
 const HOST = "127.0.0.1";
 const PORT = Number.parseInt(process.env.TABNEXUS_BRIDGE_PORT || "43120", 10);
-const VERSION = "0.4.3";
+const VERSION = "0.4.4";
 const MAX_MESSAGE_BYTES = 512 * 1024;
 const MAX_BODY_BYTES = 32 * 1024;
 const ALLOWED_TOOLS = new Set(["read_tab_workbench", "manage_tab_workbench"]);
@@ -146,7 +146,7 @@ function callExtension(tool, args = {}) {
     const timer = setTimeout(() => {
       pending.delete(requestId);
       reject(new Error("Chrome 响应超时"));
-    }, 12_000);
+    }, 3_000);
     pending.set(requestId, { resolve, reject, timer });
     try {
       send(extensionSocket, {

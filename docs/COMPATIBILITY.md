@@ -8,11 +8,11 @@
 
 ## 兼容原则
 
-- Client 只依赖 DSH 官方 `shell.overlay`、`conversation.input.left` 与 React 运行时。
+- Client 只依赖 DSH 官方 `shell.overlay`、`details` 布局能力与 React 运行时。
 - Host 只注入 `webServer` 作为同源 Chrome 桥代理，不注入 `tools` 或 Agent 服务。
 - 无 better-sidebar、MCP Client、数据库和云服务前置依赖。
 - Chrome 端使用 TabNexus 扩展的 DSH 专用本地 relay（默认 `127.0.0.1:43120`）。
-- Chrome 扩展需为 `1.0.5` 或更高版本；DSH 专用通道不受旧“Agent 桥”开关影响。
+- Chrome 扩展需为 `1.0.6` 或更高版本；DSH 专用通道不受旧“Agent 桥”开关影响。
 - 支持浅色/深色主题、键盘操作、窄屏布局与 `prefers-reduced-motion`。
 
 ## 发布检查

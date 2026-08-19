@@ -20,6 +20,11 @@ fi
 
 print "正在从 web profile 卸载 TabNexus…"
 "$DSH_BIN" plugin --profile web remove dsh-plugin-tabnexus || true
+LAUNCH_AGENT_PATH="$HOME/Library/LaunchAgents/com.tabnexus.dsh-web.plist"
+launchctl bootout "gui/$(id -u)/com.tabnexus.dsh-web" 2>/dev/null || true
+if [[ -f "$LAUNCH_AGENT_PATH" ]]; then
+  rm -f "$LAUNCH_AGENT_PATH"
+fi
 print ""
 print "✓ 已卸载。重新启动 DSH 后生效。"
 print "Chrome 插件与浏览器中的标签数据没有被删除。"

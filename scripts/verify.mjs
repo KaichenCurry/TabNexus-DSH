@@ -17,8 +17,9 @@ const readme = await readFile(resolve(root, "README.md"), "utf8");
 const architecture = await readFile(resolve(root, "docs/ARCHITECTURE.md"), "utf8");
 const relay = await readFile(resolve(root, "bridge/tabnexus-relay.mjs"), "utf8");
 const installer = await readFile(resolve(root, "installer/安装 TabNexus.command"), "utf8");
+const launchAgent = await readFile(resolve(root, "installer/com.tabnexus.dsh-web.plist.template"), "utf8");
 
-ok("release version is 0.4.3", pkg.version === "0.4.3");
+ok("release version is 0.4.4", pkg.version === "0.4.4");
 ok("host and client exports exist", pkg.exports["."]?.default === "./lib/index.js" && pkg.exports["./client"]?.default === "./lib/client.js");
 ok("package has no Agent tools dependency", !pkg.peerDependencies?.["@deepseek-ai/dsh-tools"] && !pkg.devDependencies?.["@deepseek-ai/dsh-tools"]);
 ok("package has no MCP client dependency", !JSON.stringify(pkg).includes("dsh-mcp-client"));
@@ -33,14 +34,14 @@ ok("Host auto-starts the bundled Chrome relay", host.includes("startBundledRelay
 ok("Bundled relay is UI-only", relay.includes('mode: "ui-only"') && relay.includes("/tabnexus-dsh") && relay.includes("ALLOWED_TOOLS") && !relay.includes("tools/list"));
 
 ok("Client uses official overlay slot", client.includes("shell.overlay") && client.includes("tabnexus:overlay"));
-ok("Client uses DSH composer input bridge", client.includes("conversation.input.left") && client.includes("inputActions"));
+ok("Client does not inject prompts or Agent tools", !client.includes("conversation.input.left") && !client.includes("inputActions") && !clientSource.includes("sendOrganizerPrompt"));
 ok("Client mounts the native DSH details column", client.includes('name: "details"') && client.includes("priority: -100") && client.includes("openDetails") && client.includes("closeDetails"));
 ok("Client renders icon entry instead of pill", client.includes("tnx-entry") && !client.includes("tnx-chip"));
 ok("Client keeps a recoverable panel toggle", client.includes("aria-pressed") && !client.includes("tabnexus:dsh:panel-open"));
 ok("Client panel is owned by native layout", client.includes("width:100%") && !client.includes("position:fixed;z-index:72"));
-ok("Client syncs live Chrome tabs", client.includes("/plugins/tabnexus/chrome-tabs") && clientSource.includes("3_000"));
+ok("Client syncs live Chrome tabs without overlapping requests", client.includes("/plugins/tabnexus/chrome-tabs") && clientSource.includes("900") && clientSource.includes("refreshingRef"));
 ok("Client starts with a flat tab view", clientSource.includes('useState<\"flat\" | \"grouped\">(\"flat\")') && client.includes("全部"));
-ok("Client supports one-click organization", client.includes("让 DSH 帮你梳理") && client.includes("整理预览") && client.includes("开始整理"));
+ok("Client supports one-click organization", client.includes("一键整理标签") && client.includes("整理预览") && client.includes("开始整理"));
 ok("Client supports freeform classification", client.includes("按公司和求职阶段分类") && client.includes("classification") === false);
 ok("Client preserves SPA hash routes", !clientSource.includes('url.hash = ""'));
 ok("Explicit category lists stay authoritative", clientSource.includes("explicitCategoryScore") && clientSource.includes("explicit.length ? explicit"));
@@ -50,7 +51,10 @@ ok("Client has no flow view", !client.includes("流程") && !client.includes("tn
 ok("Client preserves reduced motion", client.includes("prefers-reduced-motion"));
 ok("Client avoids DOM guessing", !client.includes("MutationObserver") && !client.includes("querySelector"));
 ok("Client avoids a select on every row", clientSource.includes("editingCategory") && client.includes("tnx-category-label"));
+ok("Client renders clear colored category tags", client.includes("tnx-category-dot") && client.includes("--tnx-category-color"));
 ok("One-click installer installs and verifies web profile", installer.includes("plugin --profile web add") && installer.includes("/plugins/tabnexus/chrome-tabs") && installer.includes("open \"http://127.0.0.1:3080/\""));
+ok("One-click installer keeps DSH Web and desktop service alive", installer.includes("launchctl bootstrap") && installer.includes("com.tabnexus.dsh-web") && launchAgent.includes("<key>KeepAlive</key>"));
+ok("One-click installer refreshes an unpacked Chrome background once", installer.includes("workspace.html?dsh=connect"));
 
 const calls = [];
 const broker = createServer(async (request, response) => {

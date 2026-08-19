@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.4
+
+- Restored reliable one-click use by running the shared DSH Web/Desktop service through a recoverable macOS LaunchAgent.
+- Removed DSH composer injection so local organization no longer triggers missing Agent tools or depends on model quota.
+- Reduced visible sync latency from three seconds to a guarded 0.9-second refresh without overlapping requests.
+- Replaced plain category text with clear, editable colored tags that match the DSH visual hierarchy.
+
 ## 0.4.3
 
 - Added a macOS double-click installer that installs, restarts, checks, and opens DSH in one pass.

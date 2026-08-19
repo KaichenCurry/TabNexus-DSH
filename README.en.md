@@ -18,7 +18,9 @@ TabNexus-DSH v0.4 is a Chrome-first tab manager embedded in DSH:
 - The panel reads the current Chrome window immediately and refreshes while open.
 - Tabs show favicon, title, domain, pinned and active states; clicking focuses the existing Chrome tab.
 - One-click organization accepts free-form instructions and creates an editable preview before applying.
-- A live DSH session can review the proposed organization through the existing composer.
+- Categories are displayed as clear colored tags and can be edited in place.
+- Organization stays inside the plugin and never injects a prompt or invokes non-existent Agent tools.
+- A guarded 0.9-second refresh loop keeps Chrome changes responsive without overlapping requests.
 - Manual categories, search, and flat/grouped views remain available.
 - The flow view has been removed.
 
@@ -28,16 +30,16 @@ DSH already is the Agent. The plugin does not register MCP/Agent tools, does not
 
 ## Install
 
-Download `TabNexus-DSH-v0.4.3-macOS.zip`, extract it, and double-click `安装 TabNexus.command`. It installs the plugin, restarts DSH, verifies the route, and opens both the Web app and the desktop shell when available.
+Download `TabNexus-DSH-v0.4.4-macOS.zip`, extract it, and double-click `安装 TabNexus.command`. It installs the plugin, configures a recoverable login service for DSH, verifies the route, opens both the Web app and the desktop shell, and refreshes a stale unpacked Chrome background once when needed.
 
 Command-line installation remains available:
 
 ```bash
-curl -LO https://github.com/KaichenCurry/TabNexus-DSH/releases/download/v0.4.3/dsh-plugin-tabnexus-0.4.3.tgz
-dsh plugin --profile web add ./dsh-plugin-tabnexus-0.4.3.tgz
+curl -LO https://github.com/KaichenCurry/TabNexus-DSH/releases/download/v0.4.4/dsh-plugin-tabnexus-0.4.4.tgz
+dsh plugin --profile web add ./dsh-plugin-tabnexus-0.4.4.tgz
 ```
 
-The TabNexus Chrome extension `1.0.5+` is still required. No API key, MCP configuration, or separate bridge command is required, and DSH sync is independent from the old Agent-bridge toggle. The desktop shell and Web app use the same Client bundle and `127.0.0.1:3080` service.
+The TabNexus Chrome extension `1.0.6+` is required. No API key, MCP configuration, or separate bridge command is required, and DSH sync is independent from the old Agent-bridge toggle. The desktop shell and Web app use the same Client bundle and `127.0.0.1:3080` service.
 
 ## Safety
 

@@ -1,9 +1,9 @@
-TabNexus for DeepSeek Harness v0.4.3
+TabNexus for DeepSeek Harness v0.4.4
 
 安装：
 1. 保持本文件夹完整，不要单独移动安装脚本。
 2. 双击“安装 TabNexus.command”。
-3. 安装器会自动安装插件、重启 DSH、打开 Web 页面并检查连接。
+3. 安装器会自动安装插件、配置 DSH 登录常驻服务、打开 Web 页面、刷新一次旧版解压扩展后台并检查连接。
 4. 点击 DSH 右上角的 TabNexus 图标即可打开右侧标签栏。
 
 使用前提：
